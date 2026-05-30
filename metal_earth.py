@@ -2,48 +2,44 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import datetime
-import os
 
 st.set_page_config(page_title="Metal Earth Tracker", page_icon="⚙️", layout="centered")
 st.title("⚙️ Metal Earth Workbench")
 
 # --- DATABASE SETUP ---
-# SQLite creates this file in the server's working directory
-db_file = 'metal_earth.db'
-conn = sqlite3.connect(db_file, check_same_thread=False)
+conn = sqlite3.connect('metal_earth.db', check_same_thread=False)
 c = conn.cursor()
 
 # Create Tables
 c.execute('''CREATE TABLE IF NOT EXISTS Models (
-    Model_ID TEXT PRIMARY KEY, Name TEXT, Brand TEXT, Product_line TEXT, Status TEXT, 
-    Difficulty TEXT, Rating TEXT, Total_Build_Time REAL, Display_Time TEXT, Image TEXT)''')
+    Model_ID TEXT PRIMARY KEY, Name TEXT, Brand TEXT, Product_line TEXT, 
+    Status TEXT, Difficulty TEXT, Rating TEXT, Total_Build_Time REAL)''')
 c.execute('''CREATE TABLE IF NOT EXISTS Build_Logs (
     Log_ID INTEGER PRIMARY KEY AUTOINCREMENT, 
-    Model_ID TEXT, Date TEXT, Start_Time TEXT, End_Time TEXT, Session_Duration REAL, 
-    Formatted_Duration TEXT, Model_Name_display TEXT)''')
+    Model_ID TEXT, Date TEXT, Session_Duration REAL)''')
 conn.commit()
 
-# --- BAKE IN DATA ---
+# --- HARD-CODED DATA INJECTION ---
 def initialize_db():
     c.execute("SELECT count(*) FROM Models")
     if c.fetchone()[0] == 0:
-        st.write("Database is empty. Attempting to import CSVs...")
-        try:
-            # Import Models
-            models_csv = pd.read_csv('Models.csv')
-            models_csv.to_sql('Models', conn, if_exists='append', index=False)
-            
-            # Import Logs
-            logs_csv = pd.read_csv('Build_Logs.csv')
-            logs_clean = logs_csv[['Model_ID', 'Date', 'Session_Duration']]
-            logs_clean.to_sql('Build_Logs', conn, if_exists='append', index=False)
-            
-            conn.commit()
-            st.success("Historical data successfully baked in!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error importing data: {e}")
-            st.write("Check that 'Models.csv' and 'Build_Logs.csv' are in the same folder as 'metal_earth.py' on GitHub.")
+        # Inject Models
+        models_data = [
+            ('MMS180', 'P-51D Mustang "Sweet Arlene"', 'Metal Earth', 'Standard', 'Complete', '7', '7', 9.999),
+            ('MMS325', 'Black Panther', 'Metal Earth', 'Marvel', 'Complete', '9.5', '10', 0),
+            ('MMS123', 'Monarch Butterfly', 'Metal Earth', 'Standard', 'Complete', '2', '2', 0),
+            ('MMS568', 'USPS LLV Mail Truck', 'Metal Earth', 'Standard', 'Not Started', '4', '', 0),
+            ('SYS', 'SYS', 'Other', '', 'In Progress', '', '', 0)
+        ]
+        c.executemany("INSERT OR IGNORE INTO Models VALUES (?,?,?,?,?,?,?,?)", models_data)
+        
+        # Inject Logs
+        logs_data = [('MMS180', '2026-05-28', 9.999)]
+        c.executemany("INSERT INTO Build_Logs (Model_ID, Date, Session_Duration) VALUES (?,?,?)", logs_data)
+        
+        conn.commit()
+        st.success("Historical data successfully injected!")
+        st.rerun()
 
 initialize_db()
 
@@ -51,25 +47,30 @@ initialize_db()
 models_df = pd.read_sql_query("SELECT * FROM Models", conn)
 logs_df = pd.read_sql_query("SELECT * FROM Build_Logs", conn)
 
-# --- TABS ---
+# --- APP NAVIGATION ---
 tab1, tab2, tab3 = st.tabs(["📋 Dashboard", "⏱️ Workbench", "📦 Inventory"])
 
 with tab1:
     st.header("Lifetime Stats")
-    if not models_df.empty:
-        st.write(f"Models in DB: {len(models_df)}")
-        total_hours = round(logs_df['Session_Duration'].sum() / 3600, 1) if not logs_df.empty else 0
-        st.metric("Total Build Time (Hours)", total_hours)
-    else:
-        st.warning("No data found in database.")
+    total_hours = round(logs_df['Session_Duration'].sum() / 3600, 1) if not logs_df.empty else 0
+    completed_kits = len(models_df[models_df['Status'] == 'Complete'])
+    st.metric("Total Build Time (Hours)", total_hours)
+    st.metric("Completed Models", completed_kits)
 
 with tab2:
     st.header("Log a Build Session")
     if not models_df.empty:
         model_list = models_df['Model_ID'] + " - " + models_df['Name']
         selected_kit = st.selectbox("Select Model:", model_list)
-        # (Rest of logging logic...)
+        kit_id = selected_kit.split(" - ")[0]
         
+        minutes = st.number_input("Minutes Worked:", min_value=1, value=30)
+        if st.button("💾 Save Session"):
+            c.execute("INSERT INTO Build_Logs (Model_ID, Date, Session_Duration) VALUES (?, ?, ?)", 
+                      (kit_id, datetime.datetime.now().strftime("%Y-%m-%d"), minutes * 60))
+            conn.commit()
+            st.rerun()
+
 with tab3:
     st.header("Master Inventory")
-    st.dataframe(models_df)
+    st.dataframe(models_df[["Model_ID", "Name", "Status", "Difficulty"]], use_container_width=True)
