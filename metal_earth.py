@@ -7,20 +7,20 @@ st.set_page_config(page_title="Metal Earth Workbench", layout="wide")
 st.title("⚙️ Metal Earth Workbench")
 
 # --- DATA LOAD ---
-# The app will look for the CSV file you just uploaded to GitHub
 try:
     master_df = pd.read_csv('metal_earth_models.csv')
-    # Standardize column names to lowercase to prevent mapping errors
     master_df.columns = master_df.columns.str.lower()
 except FileNotFoundError:
-    st.error("Missing 'metal_earth_models.csv'. Please upload it to your GitHub repo.")
-    master_df = pd.DataFrame(columns=['model_id', 'name', 'difficulty', 'category'])
+    st.error("Missing 'metal_earth_models.csv'.")
+    master_df = pd.DataFrame()
 
 # --- DATABASE SETUP ---
 conn = sqlite3.connect('models_db.db', check_same_thread=False)
 c = conn.cursor()
 
-c.execute('''CREATE TABLE IF NOT EXISTS Models 
+# We keep our database schema consistent
+c.execute('DROP TABLE IF EXISTS Models')
+c.execute('''CREATE TABLE Models 
              (model_id TEXT PRIMARY KEY, name TEXT, category TEXT, 
               status TEXT, difficulty TEXT, rating INTEGER, notes TEXT, last_worked TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS Build_Logs 
@@ -31,27 +31,29 @@ conn.commit()
 # --- NAVIGATION ---
 if 'selected_model' not in st.session_state: st.session_state.selected_model = None
 
-# --- MASTER LIST (HOME) ---
+# --- MASTER LIST ---
 if st.session_state.selected_model is None:
     with st.expander("➕ Add New Model"):
         with st.form("add_model"):
-            search_id = st.text_input("Enter Model ID (e.g., MMS180) to Auto-Fill")
+            search_id = st.text_input("Enter Model ID to Auto-Fill")
             
-            # Lookup logic
-            match = master_df[master_df['model_id'].str.upper() == search_id.upper()]
+            # Map CSV data to our Database columns
+            if not master_df.empty:
+                match = master_df[master_df['model_id'].astype(str).str.upper() == search_id.upper()]
+            else:
+                match = pd.DataFrame()
             
             if not match.empty:
-                st.success(f"Found: {match.iloc[0]['name']}")
-                name_val = match.iloc[0]['name']
-                cat_val = match.iloc[0]['category']
-                diff_val = match.iloc[0]['difficulty']
+                row = match.iloc[0]
+                name_val = row.get('name', 'Unknown')
+                cat_val = row.get('category', 'Unknown')
+                diff_val = row.get('difficulty', 'N/A')
+                st.success(f"Auto-filled: {name_val}")
             else:
-                name_val = st.text_input("Name")
-                cat_val = st.text_input("Category")
-                diff_val = st.text_input("Difficulty")
+                name_val, cat_val, diff_val = st.text_input("Name"), st.text_input("Category"), st.text_input("Difficulty")
 
             if st.form_submit_button("Create Kit"):
-                c.execute("INSERT OR IGNORE INTO Models (model_id, name, category, status, difficulty, last_worked) VALUES (?,?,?,?,?,?)", 
+                c.execute("INSERT INTO Models (model_id, name, category, status, difficulty, last_worked) VALUES (?,?,?,?,?,?)", 
                           (search_id, name_val, cat_val, 'Not Started', diff_val, datetime.now().date()))
                 conn.commit()
                 st.rerun()
@@ -59,14 +61,13 @@ if st.session_state.selected_model is None:
     st.header("Inventory")
     models = pd.read_sql_query("SELECT * FROM Models ORDER BY last_worked DESC", conn)
     for _, row in models.iterrows():
-        if st.button(f"{row['name']} ({row.get('status', 'Not Started')})", key=row['model_id']):
+        if st.button(f"{row['name']} ({row['status']})", key=row['model_id']):
             st.session_state.selected_model = row['model_id']
             st.rerun()
 
-# --- DETAIL VIEW (THE WORKBENCH) ---
+# --- DETAIL VIEW ---
 else:
     model_id = st.session_state.selected_model
-    # Fetch model row
     model = pd.read_sql_query(f"SELECT * FROM Models WHERE model_id='{model_id}'", conn).iloc[0]
     
     if st.button("⬅️ Back"):
@@ -75,7 +76,6 @@ else:
         
     st.title(f"Workbench: {model['name']}")
     
-    # Edit Form
     with st.expander("✏️ Edit Model Details"):
         with st.form("edit_model"):
             e_rate = st.slider("Rating", 1, 10, int(model.get('rating') or 1))
@@ -85,7 +85,6 @@ else:
                 conn.commit()
                 st.rerun()
 
-    # Metrics & Timer
     logs = pd.read_sql_query(f"SELECT * FROM Build_Logs WHERE model_id='{model_id}'", conn)
     st.metric("Total Time (Minutes)", round(logs['duration'].sum() / 60, 1) if not logs.empty else 0)
 
