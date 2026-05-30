@@ -1,66 +1,73 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import datetime
-
-st.set_page_config(page_title="Metal Earth Tracker", page_icon="⚙️", layout="centered")
-st.title("⚙️ Metal Earth Workbench")
+from datetime import datetime
 
 # --- DATABASE SETUP ---
-conn = sqlite3.connect('metal_earth.db', check_same_thread=False)
+def get_db():
+    conn = sqlite3.connect('models_db.db', check_same_thread=False)
+    return conn
+
+# Create tables
+conn = get_db()
 c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS Models 
+             (Model_ID TEXT PRIMARY KEY, Name TEXT, Status TEXT, Last_Worked TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS Build_Logs 
+             (Log_ID INTEGER PRIMARY KEY AUTOINCREMENT, Model_ID TEXT, 
+              Start_Time TEXT, End_Time TEXT, Duration REAL, Notes TEXT, Image_Path TEXT)''')
 
-# FORCE RE-CREATION: Drop tables so we start perfectly fresh every time
-c.execute('DROP TABLE IF EXISTS Models')
-c.execute('DROP TABLE IF EXISTS Build_Logs')
+# Hard-coded injection (Only runs if DB is empty)
+c.execute("SELECT count(*) FROM Models")
+if c.fetchone()[0] == 0:
+    models = [('MMS180', 'P-51D Mustang', 'Complete', '2026-05-28'), ('MMS325', 'Black Panther', 'Complete', '2026-05-28')]
+    c.executemany("INSERT INTO Models VALUES (?,?,?,?)", models)
+    conn.commit()
 
-c.execute('''CREATE TABLE Models (
-    Model_ID TEXT PRIMARY KEY, Name TEXT, Brand TEXT, Product_line TEXT, 
-    Status TEXT, Difficulty TEXT, Rating TEXT, Total_Build_Time REAL)''')
+# --- APP UI ---
+st.title("⚙️ Metal Earth Workbench")
 
-c.execute('''CREATE TABLE Build_Logs (
-    Log_ID INTEGER PRIMARY KEY AUTOINCREMENT, 
-    Model_ID TEXT, Date TEXT, Session_Duration REAL)''')
-conn.commit()
+# Navigation logic: Use session state to track if we are viewing a specific model
+if 'selected_model' not in st.session_state:
+    st.session_state.selected_model = None
 
-# --- DATA INJECTION ---
-# This will now run every time, ensuring tables are perfectly aligned with data
-models_data = [
-    ('MMS180', 'P-51D Mustang Sweet Arlene', 'Metal Earth', 'Standard', 'Complete', '7', '7', 9.999),
-    ('MMS325', 'Black Panther', 'Metal Earth', 'Marvel', 'Complete', '9.5', '10', 0),
-    ('MMS123', 'Monarch Butterfly', 'Metal Earth', 'Standard', 'Complete', '2', '2', 0),
-    ('MMS568', 'USPS LLV Mail Truck', 'Metal Earth', 'Standard', 'Not Started', '4', '0', 0),
-    ('SYS', 'SYS', 'Other', 'Other', 'In Progress', '0', '0', 0)
-]
-c.executemany("INSERT INTO Models VALUES (?,?,?,?,?,?,?,?)", models_data)
+# --- MASTER VIEW (LIST) ---
+if st.session_state.selected_model is None:
+    st.header("Your Inventory")
+    models = pd.read_sql_query("SELECT * FROM Models ORDER BY Last_Worked DESC", conn)
+    
+    for i, row in models.iterrows():
+        if st.button(f"{row['Name']} (Last: {row['Last_Worked']})", key=row['Model_ID']):
+            st.session_state.selected_model = row['Model_ID']
+            st.rerun()
 
-logs_data = [('MMS180', '2026-05-28', 9.999)]
-c.executemany("INSERT INTO Build_Logs (Model_ID, Date, Session_Duration) VALUES (?,?,?)", logs_data)
-conn.commit()
-
-# --- APP INTERFACE ---
-models_df = pd.read_sql_query("SELECT * FROM Models", conn)
-logs_df = pd.read_sql_query("SELECT * FROM Build_Logs", conn)
-
-tab1, tab2, tab3 = st.tabs(["📋 Dashboard", "⏱️ Workbench", "📦 Inventory"])
-
-with tab1:
-    st.header("Lifetime Stats")
-    st.metric("Total Build Time (Hours)", round(logs_df['Session_Duration'].sum() / 3600, 1) if not logs_df.empty else 0)
-    st.metric("Completed Models", len(models_df[models_df['Status'] == 'Complete']) if not models_df.empty else 0)
-
-with tab2:
-    st.header("Log Session")
-    model_list = models_df['Model_ID'] + " - " + models_df['Name']
-    selected = st.selectbox("Select Model:", model_list)
-    kit_id = selected.split(" - ")[0]
-    mins = st.number_input("Minutes:", min_value=1, value=30)
-    if st.button("Save"):
-        c.execute("INSERT INTO Build_Logs (Model_ID, Date, Session_Duration) VALUES (?, ?, ?)", 
-                  (kit_id, datetime.datetime.now().strftime("%Y-%m-%d"), mins * 60))
-        conn.commit()
+# --- DETAIL VIEW ---
+else:
+    model_id = st.session_state.selected_model
+    model = pd.read_sql_query(f"SELECT * FROM Models WHERE Model_ID='{model_id}'", conn).iloc[0]
+    
+    if st.button("⬅️ Back to Inventory"):
+        st.session_state.selected_model = None
         st.rerun()
+        
+    st.header(f"Workbench: {model['Name']}")
+    
+    # Timer logic
+    if 'start_time' not in st.session_state:
+        if st.button("▶️ Start Session"):
+            st.session_state.start_time = datetime.now()
+    else:
+        if st.button("⏹️ Stop Session"):
+            duration = (datetime.now() - st.session_state.start_time).total_seconds()
+            c.execute("INSERT INTO Build_Logs (Model_ID, Start_Time, End_Time, Duration) VALUES (?,?,?,?)",
+                      (model_id, st.session_state.start_time, datetime.now(), duration))
+            c.execute("UPDATE Models SET Last_Worked=? WHERE Model_ID=?", (datetime.now().date(), model_id))
+            conn.commit()
+            del st.session_state.start_time
+            st.success("Session logged!")
+            st.rerun()
 
-with tab3:
-    st.header("Inventory")
-    st.dataframe(models_df[["Model_ID", "Name", "Status", "Difficulty"]], use_container_width=True)
+    # Display Logs
+    st.subheader("Build History")
+    logs = pd.read_sql_query(f"SELECT * FROM Build_Logs WHERE Model_ID='{model_id}'", conn)
+    st.dataframe(logs)
