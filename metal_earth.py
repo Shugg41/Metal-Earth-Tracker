@@ -222,20 +222,6 @@ if 'db_loaded' not in st.session_state:
     st.session_state.db_loaded = True
 
 # ─────────────────────────────────────────────
-# MASTER CSV
-# ─────────────────────────────────────────────
-@st.cache_data
-def load_master():
-    try:
-        df = pd.read_csv('metal_earth_models.csv')
-        df.columns = df.columns.str.lower().str.strip()
-        return df
-    except FileNotFoundError:
-        return pd.DataFrame()
-
-master_df = load_master()
-
-# ─────────────────────────────────────────────
 # DATABASE SETUP
 # ─────────────────────────────────────────────
 conn = sqlite3.connect('models_db.db', check_same_thread=False)
@@ -430,33 +416,17 @@ if st.session_state.page == 'inventory':
 
     with st.expander("➕ Add a Model to Your Collection"):
         with st.form("add_model", clear_on_submit=True):
-            search_id    = st.text_input("Model ID (e.g. ME1054 or MMS073)").strip().upper()
-            name_val     = cat_val = diff_val = ''
-            diff_num_val = sheets_val = None
-            auto_filled  = False
-
-            if search_id and not master_df.empty:
-                match = master_df[master_df['model_id'].astype(str).str.upper() == search_id]
-                if not match.empty:
-                    row          = match.iloc[0]
-                    name_val     = str(row.get('name', ''))
-                    cat_val      = str(row.get('category', ''))
-                    diff_val     = str(row.get('difficulty', ''))
-                    diff_num_val = safe_int(row.get('difficulty_num'))
-                    sheets_val   = safe_float(row.get('sheets'))
-                    auto_filled  = True
-
-            if auto_filled:
-                sheets_display = f"{sheets_val} sheets" if sheets_val is not None else "? sheets"
-                st.success(f"✓ Found: **{name_val}** — {cat_val} | {diff_val} | {sheets_display}")
-
-            name_input = st.text_input("Name",       value=name_val)
-            cat_input  = st.text_input("Category",   value=cat_val)
-            diff_input = st.text_input("Difficulty", value=diff_val)
+            search_id  = st.text_input("Model ID (e.g. ME1054 or MMS073)").strip().upper()
+            name_input = st.text_input("Name")
+            cat_input  = st.text_input("Category")
+            diff_input = st.text_input("Difficulty")
+            sheets_val = st.number_input("Sheets", min_value=0.0, step=0.5, value=0.0)
 
             if st.form_submit_button("Add to Collection"):
                 if not search_id:
                     st.error("Please enter a Model ID.")
+                elif not name_input:
+                    st.error("Please enter a Name.")
                 else:
                     exists = c.execute("SELECT 1 FROM Models WHERE model_id=?", (search_id,)).fetchone()
                     if exists:
@@ -467,13 +437,12 @@ if st.session_state.page == 'inventory':
                                (model_id, name, category, sheets, status,
                                 difficulty, difficulty_num, last_worked)
                                VALUES (?,?,?,?,?,?,?,?)""",
-                            (search_id, name_input, cat_input, sheets_val,
-                             'Not Started', diff_input, diff_num_val,
+                            (search_id, name_input, cat_input, sheets_val if sheets_val > 0 else None,
+                             'Not Started', diff_input, None,
                              str(datetime.now().date())))
                         with st.spinner("Saving..."):
                             save()
                         st.success(f"Added {name_input}!")
-                        st.cache_data.clear()
                         st.rerun()
 
     # Filters
