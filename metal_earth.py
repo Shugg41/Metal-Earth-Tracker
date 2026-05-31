@@ -3,12 +3,99 @@ import sqlite3
 import pandas as pd
 import requests
 import base64
+import os
 from datetime import datetime
 
 st.set_page_config(page_title="Metal Earth Workbench", layout="wide")
 
 # ─────────────────────────────────────────────
-# 1. LOAD MASTER CSV
+# GITHUB HELPERS
+# ─────────────────────────────────────────────
+def gh_headers():
+    token = st.secrets.get("GITHUB_TOKEN", "")
+    return {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+def gh_repo():
+    return st.secrets.get("GITHUB_REPO", "")
+
+def pull_db_from_github():
+    """Download models_db.db from GitHub if it exists. Returns True if loaded."""
+    try:
+        repo = gh_repo()
+        if not repo:
+            return False
+        url = f"https://api.github.com/repos/{repo}/contents/models_db.db"
+        r = requests.get(url, headers=gh_headers(), timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            db_bytes = base64.b64decode(data["content"])
+            with open("models_db.db", "wb") as f:
+                f.write(db_bytes)
+            return True
+        return False
+    except Exception:
+        return False
+
+def push_db_to_github():
+    """Upload current models_db.db to GitHub repo root."""
+    try:
+        repo = gh_repo()
+        if not repo:
+            return False
+        with open("models_db.db", "rb") as f:
+            db_bytes = f.read()
+        b64 = base64.b64encode(db_bytes).decode("utf-8")
+        url = f"https://api.github.com/repos/{repo}/contents/models_db.db"
+        # Get existing SHA if file already exists
+        r = requests.get(url, headers=gh_headers(), timeout=10)
+        sha = r.json().get("sha") if r.status_code == 200 else None
+        payload = {
+            "message": f"Update database {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "content": b64,
+        }
+        if sha:
+            payload["sha"] = sha
+        r2 = requests.put(url, headers=gh_headers(), json=payload, timeout=30)
+        return r2.status_code in (200, 201)
+    except Exception:
+        return False
+
+def upload_to_github(image_bytes, filename):
+    """Upload image bytes to GitHub repo /photos folder. Returns (url, error)."""
+    try:
+        repo = gh_repo()
+        if not repo:
+            return None, "GITHUB_REPO not set in Streamlit secrets."
+        path    = f"photos/{filename}"
+        api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        check   = requests.get(api_url, headers=gh_headers(), timeout=10)
+        sha     = check.json().get("sha") if check.status_code == 200 else None
+        b64     = base64.b64encode(image_bytes).decode("utf-8")
+        payload = {"message": f"Add progress photo: {filename}", "content": b64}
+        if sha:
+            payload["sha"] = sha
+        response = requests.put(api_url, headers=gh_headers(), json=payload, timeout=20)
+        if response.status_code in (200, 201):
+            raw_url = f"https://raw.githubusercontent.com/{repo}/main/{path}"
+            return raw_url, None
+        else:
+            return None, response.json().get("message", "GitHub upload failed.")
+    except Exception as e:
+        return None, str(e)
+
+# ─────────────────────────────────────────────
+# 1. PULL DATABASE FROM GITHUB ON STARTUP
+# ─────────────────────────────────────────────
+if 'db_loaded' not in st.session_state:
+    with st.spinner("Loading your collection..."):
+        pull_db_from_github()
+    st.session_state.db_loaded = True
+
+# ─────────────────────────────────────────────
+# 2. LOAD MASTER CSV
 # ─────────────────────────────────────────────
 @st.cache_data
 def load_master():
@@ -22,7 +109,7 @@ def load_master():
 master_df = load_master()
 
 # ─────────────────────────────────────────────
-# 2. DATABASE SETUP
+# 3. DATABASE SETUP
 # ─────────────────────────────────────────────
 conn = sqlite3.connect('models_db.db', check_same_thread=False)
 c = conn.cursor()
@@ -46,7 +133,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS Build_Logs
               duration    REAL,
               notes       TEXT)''')
 
-# Photos table — stores imgur URLs linked to a model + optional caption
 c.execute('''CREATE TABLE IF NOT EXISTS Photos
              (photo_id    INTEGER PRIMARY KEY AUTOINCREMENT,
               model_id    TEXT,
@@ -57,50 +143,15 @@ c.execute('''CREATE TABLE IF NOT EXISTS Photos
 conn.commit()
 
 # ─────────────────────────────────────────────
-# 3. GITHUB UPLOAD HELPER
+# 4. SAVE HELPER — call after every data change
 # ─────────────────────────────────────────────
-def upload_to_github(image_bytes, filename):
-    """Upload image bytes to GitHub repo /photos folder. Returns (url, error)."""
-    try:
-        token = st.secrets.get("GITHUB_TOKEN", None)
-        repo  = st.secrets.get("GITHUB_REPO", None)
-
-        if not token or not repo:
-            return None, "GITHUB_TOKEN or GITHUB_REPO not set in Streamlit secrets."
-
-        path    = f"photos/{filename}"
-        api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-
-        # Check if file already exists (to get its SHA for updates)
-        check = requests.get(api_url, headers=headers, timeout=10)
-        sha = check.json().get("sha") if check.status_code == 200 else None
-
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        payload = {
-            "message": f"Add progress photo: {filename}",
-            "content": b64,
-        }
-        if sha:
-            payload["sha"] = sha
-
-        response = requests.put(api_url, headers=headers, json=payload, timeout=20)
-
-        if response.status_code in (200, 201):
-            raw_url = f"https://raw.githubusercontent.com/{repo}/main/{path}"
-            return raw_url, None
-        else:
-            err = response.json().get("message", "GitHub upload failed.")
-            return None, err
-
-    except Exception as e:
-        return None, str(e)
+def save():
+    """Commit to SQLite and push database to GitHub."""
+    conn.commit()
+    push_db_to_github()
 
 # ─────────────────────────────────────────────
-# 4. HELPERS
+# 5. QUERY HELPERS
 # ─────────────────────────────────────────────
 STATUS_OPTIONS = ['Not Started', 'In Progress', 'Completed', 'On Hold']
 
@@ -129,8 +180,26 @@ def total_time_minutes(model_id):
         return 0
     return round(logs['duration'].sum() / 60, 1)
 
+def safe_int(val):
+    """Safely convert pandas/numpy numeric to plain Python int, or None."""
+    try:
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return None
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+def safe_float(val):
+    """Safely convert pandas/numpy numeric to plain Python float, or None."""
+    try:
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return None
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
 # ─────────────────────────────────────────────
-# 5. NAVIGATION STATE
+# 6. NAVIGATION STATE
 # ─────────────────────────────────────────────
 if 'page' not in st.session_state:
     st.session_state.page = 'inventory'
@@ -138,7 +207,7 @@ if 'selected_model' not in st.session_state:
     st.session_state.selected_model = None
 
 # ─────────────────────────────────────────────
-# 6. DASHBOARD STATS (always visible)
+# 7. DASHBOARD STATS
 # ─────────────────────────────────────────────
 all_models = get_all_models()
 
@@ -161,7 +230,7 @@ c5.metric("📸 Progress Photos",   total_photos)
 st.divider()
 
 # ─────────────────────────────────────────────
-# 7. INVENTORY PAGE
+# 8. INVENTORY PAGE
 # ─────────────────────────────────────────────
 if st.session_state.page == 'inventory':
 
@@ -171,21 +240,27 @@ if st.session_state.page == 'inventory':
         with st.form("add_model", clear_on_submit=True):
             search_id = st.text_input("Model ID (e.g. ME1054 or MMS073)").strip().upper()
 
-            name_val = cat_val = diff_val = diff_num = sheets_val = ''
-            auto_filled = False
+            name_val     = ''
+            cat_val      = ''
+            diff_val     = ''
+            diff_num_val = None
+            sheets_val   = None
+            auto_filled  = False
+
             if search_id and not master_df.empty:
                 match = master_df[master_df['model_id'].astype(str).str.upper() == search_id]
                 if not match.empty:
-                    row = match.iloc[0]
-                    name_val    = str(row.get('name', ''))
-                    cat_val     = str(row.get('category', ''))
-                    diff_val    = str(row.get('difficulty', ''))
-                    diff_num    = row.get('difficulty_num', None)
-                    sheets_val  = row.get('sheets', None)
-                    auto_filled = True
+                    row          = match.iloc[0]
+                    name_val     = str(row.get('name', ''))
+                    cat_val      = str(row.get('category', ''))
+                    diff_val     = str(row.get('difficulty', ''))
+                    diff_num_val = safe_int(row.get('difficulty_num'))
+                    sheets_val   = safe_float(row.get('sheets'))
+                    auto_filled  = True
 
             if auto_filled:
-                st.success(f"✓ Found: **{name_val}** — {cat_val} | {diff_val} | {sheets_val} sheets")
+                sheets_display = f"{sheets_val} sheets" if sheets_val is not None else "? sheets"
+                st.success(f"✓ Found: **{name_val}** — {cat_val} | {diff_val} | {sheets_display}")
 
             name_input = st.text_input("Name",       value=name_val)
             cat_input  = st.text_input("Category",   value=cat_val)
@@ -205,12 +280,16 @@ if st.session_state.page == 'inventory':
                                (model_id, name, category, sheets, status,
                                 difficulty, difficulty_num, last_worked)
                                VALUES (?,?,?,?,?,?,?,?)""",
-                            (search_id, name_input, cat_input,
-                             sheets_val if sheets_val != '' else None,
-                             'Not Started', diff_input,
-                             int(diff_num) if diff_num and str(diff_num) != 'nan' else None,
+                            (search_id,
+                             name_input,
+                             cat_input,
+                             sheets_val,
+                             'Not Started',
+                             diff_input,
+                             diff_num_val,
                              str(datetime.now().date())))
-                        conn.commit()
+                        with st.spinner("Saving..."):
+                            save()
                         st.success(f"Added {name_input}!")
                         st.cache_data.clear()
                         st.rerun()
@@ -248,23 +327,22 @@ if st.session_state.page == 'inventory':
         st.info("No models yet. Add one above!")
     else:
         for _, row in display_df.iterrows():
-            emoji = STATUS_EMOJI.get(row['status'], '⬜')
+            emoji      = STATUS_EMOJI.get(row['status'], '⬜')
             sheets_str = f" • {row['sheets']}sh" if pd.notna(row.get('sheets')) and row.get('sheets') else ''
-            # Show thumbnail if photos exist
-            photos = get_photos(row['model_id'])
-            thumb = f"  📸" if not photos.empty else ""
-            label = f"{emoji} {row['name']}  ({row['model_id']}){sheets_str}  — {row['status']}{thumb}"
+            photos     = get_photos(row['model_id'])
+            thumb      = "  📸" if not photos.empty else ""
+            label      = f"{emoji} {row['name']}  ({row['model_id']}){sheets_str}  — {row['status']}{thumb}"
             if st.button(label, key=f"btn_{row['model_id']}", use_container_width=True):
                 st.session_state.selected_model = row['model_id']
                 st.session_state.page = 'workbench'
                 st.rerun()
 
 # ─────────────────────────────────────────────
-# 8. WORKBENCH PAGE
+# 9. WORKBENCH PAGE
 # ─────────────────────────────────────────────
 elif st.session_state.page == 'workbench':
     model_id = st.session_state.selected_model
-    model = get_model(model_id)
+    model    = get_model(model_id)
 
     if model is None:
         st.error("Model not found.")
@@ -286,7 +364,6 @@ elif st.session_state.page == 'workbench':
 
     st.divider()
 
-    # ── TABS: Details | Timer | Photos ─────────────
     tab_details, tab_timer, tab_photos = st.tabs(["📋 Details", "⏱️ Build Timer", "📸 Progress Photos"])
 
     # ── TAB: DETAILS ───────────────────────────────
@@ -302,7 +379,8 @@ elif st.session_state.page == 'workbench':
                 c.execute(
                     "UPDATE Models SET status=?, rating=?, notes=? WHERE model_id=?",
                     (new_status, new_rating, new_notes, model_id))
-                conn.commit()
+                with st.spinner("Saving..."):
+                    save()
                 st.success("Saved!")
                 st.rerun()
 
@@ -310,7 +388,8 @@ elif st.session_state.page == 'workbench':
             c.execute("DELETE FROM Models WHERE model_id=?",     (model_id,))
             c.execute("DELETE FROM Build_Logs WHERE model_id=?", (model_id,))
             c.execute("DELETE FROM Photos WHERE model_id=?",     (model_id,))
-            conn.commit()
+            with st.spinner("Saving..."):
+                save()
             st.session_state.page = 'inventory'
             st.session_state.selected_model = None
             st.rerun()
@@ -339,7 +418,8 @@ elif st.session_state.page == 'workbench':
                     (str(datetime.now().date()),
                      'In Progress' if model['status'] == 'Not Started' else model['status'],
                      model_id))
-                conn.commit()
+                with st.spinner("Saving..."):
+                    save()
                 del st.session_state.timer_start
                 st.success(f"Logged {round(duration/60, 1)} minutes!")
                 st.rerun()
@@ -356,7 +436,8 @@ elif st.session_state.page == 'workbench':
                      manual_mins * 60, manual_note))
                 c.execute("UPDATE Models SET last_worked=? WHERE model_id=?",
                     (str(datetime.now().date()), model_id))
-                conn.commit()
+                with st.spinner("Saving..."):
+                    save()
                 st.success("Logged!")
                 st.rerun()
 
@@ -376,7 +457,6 @@ elif st.session_state.page == 'workbench':
     with tab_photos:
         photos = get_photos(model_id)
 
-        # ── UPLOAD SECTION ─────────────────────────
         with st.expander("📤 Upload a Progress Photo"):
             uploaded_file = st.file_uploader(
                 "Choose an image", type=["jpg", "jpeg", "png", "webp"],
@@ -388,29 +468,27 @@ elif st.session_state.page == 'workbench':
                 if st.button("📤 Upload to Gallery", type="primary"):
                     with st.spinner("Uploading to GitHub..."):
                         image_bytes = uploaded_file.read()
-                        ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"{model_id}_{timestamp}.{ext}"
-                        url, err = upload_to_github(image_bytes, filename)
+                        ext         = uploaded_file.name.rsplit(".", 1)[-1].lower()
+                        timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        filename    = f"{model_id}_{timestamp}.{ext}"
+                        url, err    = upload_to_github(image_bytes, filename)
                     if url:
                         c.execute(
                             "INSERT INTO Photos (model_id, url, caption, uploaded_at) VALUES (?,?,?,?)",
                             (model_id, url, caption_input,
                              datetime.now().strftime("%Y-%m-%d %H:%M")))
-                        conn.commit()
+                        with st.spinner("Saving..."):
+                            save()
                         st.success("Photo uploaded!")
                         st.rerun()
                     else:
                         st.error(f"Upload failed: {err}")
                         st.info("Make sure GITHUB_TOKEN and GITHUB_REPO are set in your Streamlit secrets.")
 
-        # ── PHOTO GALLERY ──────────────────────────
         if photos.empty:
             st.info("No photos yet. Document your build progress!")
         else:
             st.write(f"**{len(photos)} photo{'s' if len(photos) > 1 else ''}**")
-
-            # 3-column grid
             cols = st.columns(3)
             for i, (_, photo) in enumerate(photos.iterrows()):
                 with cols[i % 3]:
@@ -420,5 +498,6 @@ elif st.session_state.page == 'workbench':
                     st.caption(f"🕐 {photo['uploaded_at']}")
                     if st.button("🗑️", key=f"del_photo_{photo['photo_id']}", help="Delete photo"):
                         c.execute("DELETE FROM Photos WHERE photo_id=?", (photo['photo_id'],))
-                        conn.commit()
+                        with st.spinner("Saving..."):
+                            save()
                         st.rerun()
