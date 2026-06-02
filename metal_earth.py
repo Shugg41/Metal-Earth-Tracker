@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import base64
 import io
+import json
 import os
 from datetime import datetime
 
@@ -279,6 +280,80 @@ def save():
     conn.commit()
     return push_db_to_github()
 
+# ─────────────────────────────────────────────
+# GOOGLE SHEETS SYNC (optional, via Apps Script webhook)
+# ─────────────────────────────────────────────
+def gsheet_webhook():
+    return st.secrets.get("GSHEET_WEBHOOK_URL", "")
+
+def _tab_payload(df):
+    """Serialize a DataFrame to {columns, rows} with JSON-native types
+    (to_json handles NaN -> null and numpy -> native, which raw .tolist() does not)."""
+    obj = json.loads(df.to_json(orient="split"))
+    return {"columns": obj["columns"], "rows": obj["data"]}
+
+def sync_to_sheet():
+    """Push a full snapshot of the collection to the user's Google Sheet via
+    their Apps Script web app. Best-effort — returns (ok, message)."""
+    url = gsheet_webhook()
+    if not url:
+        return False, "No GSHEET_WEBHOOK_URL configured."
+    try:
+        models = pd.read_sql_query("SELECT * FROM Models ORDER BY model_id", conn)
+        logs   = pd.read_sql_query("SELECT * FROM Build_Logs ORDER BY model_id, start_time", conn)
+        photos = pd.read_sql_query("SELECT * FROM Photos ORDER BY model_id, uploaded_at", conn)
+        payload = {
+            "secret": st.secrets.get("GSHEET_SECRET", ""),
+            "tabs": {
+                "Models":     _tab_payload(models),
+                "Build Logs": _tab_payload(logs),
+                "Photos":     _tab_payload(photos),
+            },
+        }
+        # Apps Script 302-redirects to googleusercontent; requests follows it.
+        r = requests.post(url, json=payload, timeout=15)
+        try:
+            ok_flag = (r.json().get("status") == "ok")
+        except Exception:
+            ok_flag = r.ok
+        return (True, "Synced.") if ok_flag else (False, f"HTTP {r.status_code}: {r.text[:150]}")
+    except Exception as e:
+        return False, str(e)
+
+# Paste-able Apps Script for the user's Google Sheet (shown on the Export page).
+APPS_SCRIPT_CODE = '''const SECRET = "";  // optional: set a password, then put the same value in GSHEET_SECRET
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+    if (SECRET && body.secret !== SECRET) {
+      return ContentService
+        .createTextOutput(JSON.stringify({status: "error", message: "bad secret"}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const tabs = body.tabs || {};
+    Object.keys(tabs).forEach(function (name) {
+      let sheet = ss.getSheetByName(name);
+      if (!sheet) sheet = ss.insertSheet(name);
+      sheet.clearContents();
+      const cols = tabs[name].columns || [];
+      const rows = tabs[name].rows || [];
+      const data = [cols].concat(rows);
+      if (cols.length) {
+        sheet.getRange(1, 1, data.length, cols.length).setValues(data);
+      }
+    });
+    return ContentService
+      .createTextOutput(JSON.stringify({status: "ok"}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({status: "error", message: String(err)}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}'''
+
 def save_and_report(success_msg="Saved!"):
     """Save and surface the real outcome to the user. On failure we never
     claim success — the change is local-only and at risk until it syncs."""
@@ -288,6 +363,11 @@ def save_and_report(success_msg="Saved!"):
         st.session_state['unsynced'] = False
         if success_msg:
             st.success(success_msg)
+        # Best-effort live mirror to the user's Google Sheet, only if a webhook
+        # is configured. Never blocks or fails the save — just a toast either way.
+        if gsheet_webhook():
+            sok, smsg = sync_to_sheet()
+            st.toast("📊 Google Sheet updated" if sok else f"⚠️ Sheet sync failed: {smsg}")
     else:
         st.session_state['unsynced'] = True
         st.error(
@@ -757,6 +837,43 @@ elif st.session_state.page == 'export':
         st.caption(
             f"Ready to export: **{len(models_df)} models · {len(logs_df)} sessions · "
             f"{len(photos_df)} photos**. The download is generated fresh from your current data.")
+
+    # ── Live Google Sheet sync (optional) ──────────────────────
+    st.divider()
+    st.markdown("<h3>🔄 Live Google Sheet sync</h3>", unsafe_allow_html=True)
+
+    if gsheet_webhook():
+        st.success("✅ Connected — your sheet auto-updates on every save.")
+        if st.button("🔄 Sync now", type="primary"):
+            with st.spinner("Pushing to your Google Sheet..."):
+                ok, msg = sync_to_sheet()
+            if ok:
+                st.success("Google Sheet updated!")
+            else:
+                st.error(f"Sync failed: {msg}")
+    else:
+        st.info("Not connected yet. Set it up once below, then it stays in sync automatically.")
+
+    with st.expander("⚙️ One-time setup (about 5 minutes)"):
+        st.markdown("""
+**1.** Create (or open) a Google Sheet you want your data mirrored into.
+
+**2.** In that sheet: **Extensions → Apps Script**. Delete whatever's there and paste the script below. *(Optional: set `SECRET` to any password to lock down your webhook.)*
+
+**3.** Click **Deploy → New deployment** → gear icon → **Web app**. Set **Execute as: Me** and **Who has access: Anyone**, then **Deploy**. Approve the access prompt (click *Advanced → Go to … (unsafe)* — it's your own script).
+
+**4.** Copy the **Web app URL** it gives you.
+
+**5.** Add it to your app secrets (`.streamlit/secrets.toml`, or *Manage app → Secrets* on Streamlit Cloud):
+```toml
+GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/XXXX/exec"
+# GSHEET_SECRET = "the-same-password-as-SECRET"   # only if you set one
+```
+
+**6.** Reload this app and hit **Sync now**. Every save after that updates the sheet automatically. Each table (Models / Build Logs / Photos) becomes its own tab.
+""")
+        st.caption("Paste this into Apps Script:")
+        st.code(APPS_SCRIPT_CODE, language="javascript")
 
 # ─────────────────────────────────────────────
 # WORKBENCH PAGE
