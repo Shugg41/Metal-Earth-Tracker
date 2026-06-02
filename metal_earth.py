@@ -594,40 +594,48 @@ elif st.session_state.page == 'stats':
         if not real_logs.empty:
             st.markdown("#### 🗓️ Build Activity")
             heatmap_logs = real_logs.copy()
-            heatmap_logs['date'] = pd.to_datetime(heatmap_logs['start_time']).dt.date
-            daily = heatmap_logs.groupby('date')['duration'].sum().reset_index()
-            daily.columns = ['date', 'seconds']
+            # start_time is stored in mixed formats (ISO from the timer,
+            # "%Y-%m-%d %H:%M" from manual logs) — parse flexibly and drop
+            # any rows that still won't parse instead of crashing.
+            parsed = pd.to_datetime(heatmap_logs['start_time'], format='mixed', errors='coerce')
+            heatmap_logs = heatmap_logs.assign(date=parsed.dt.date)
+            heatmap_logs = heatmap_logs.dropna(subset=['date'])
+            if heatmap_logs.empty:
+                st.info("No dated sessions to chart yet.")
+            else:
+                daily = heatmap_logs.groupby('date')['duration'].sum().reset_index()
+                daily.columns = ['date', 'seconds']
 
-            import datetime as dt
-            today      = dt.date.today()
-            start_date = today - dt.timedelta(weeks=12)
-            date_range = pd.date_range(start=start_date, end=today)
-            date_df    = pd.DataFrame({'date': date_range.date})
-            merged     = date_df.merge(daily, on='date', how='left').fillna(0)
-            max_secs   = merged['seconds'].max() or 1
+                import datetime as dt
+                today      = dt.date.today()
+                start_date = today - dt.timedelta(weeks=12)
+                date_range = pd.date_range(start=start_date, end=today)
+                date_df    = pd.DataFrame({'date': date_range.date})
+                merged     = date_df.merge(daily, on='date', how='left').fillna(0)
+                max_secs   = merged['seconds'].max() or 1
 
-            # Render as a grid of colored squares
-            weeks = [merged.iloc[i:i+7] for i in range(0, len(merged), 7)]
-            week_html = "<div style='display:flex;gap:3px;flex-wrap:nowrap;overflow-x:auto'>"
-            for week in weeks:
-                week_html += "<div style='display:flex;flex-direction:column;gap:3px'>"
-                for _, day_row in week.iterrows():
-                    intensity = day_row['seconds'] / max_secs
-                    if intensity == 0:
-                        color = "#1c1c1c"
-                    elif intensity < 0.3:
-                        color = "#5a3e00"
-                    elif intensity < 0.6:
-                        color = "#9a6a00"
-                    else:
-                        color = "#c8a84b"
-                    mins  = int(day_row['seconds'] // 60)
-                    title = f"{day_row['date']}: {mins}min"
-                    week_html += f"<div title='{title}' style='width:14px;height:14px;background:{color};border-radius:3px;border:1px solid #2a2a2a'></div>"
+                # Render as a grid of colored squares
+                weeks = [merged.iloc[i:i+7] for i in range(0, len(merged), 7)]
+                week_html = "<div style='display:flex;gap:3px;flex-wrap:nowrap;overflow-x:auto'>"
+                for week in weeks:
+                    week_html += "<div style='display:flex;flex-direction:column;gap:3px'>"
+                    for _, day_row in week.iterrows():
+                        intensity = day_row['seconds'] / max_secs
+                        if intensity == 0:
+                            color = "#1c1c1c"
+                        elif intensity < 0.3:
+                            color = "#5a3e00"
+                        elif intensity < 0.6:
+                            color = "#9a6a00"
+                        else:
+                            color = "#c8a84b"
+                        mins  = int(day_row['seconds'] // 60)
+                        title = f"{day_row['date']}: {mins}min"
+                        week_html += f"<div title='{title}' style='width:14px;height:14px;background:{color};border-radius:3px;border:1px solid #2a2a2a'></div>"
+                    week_html += "</div>"
                 week_html += "</div>"
-            week_html += "</div>"
-            week_html += "<div style='color:#555;font-size:0.7rem;margin-top:6px'>Last 12 weeks — hover for details</div>"
-            st.markdown(week_html, unsafe_allow_html=True)
+                week_html += "<div style='color:#555;font-size:0.7rem;margin-top:6px'>Last 12 weeks — hover for details</div>"
+                st.markdown(week_html, unsafe_allow_html=True)
 
         st.divider()
 
