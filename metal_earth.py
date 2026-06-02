@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 import requests
 import base64
+import io
 import os
 from datetime import datetime
 
@@ -272,8 +273,28 @@ conn.commit()
 # SAVE HELPER
 # ─────────────────────────────────────────────
 def save():
+    """Commit locally, then push to GitHub. Returns True only if the remote
+    push succeeded — local commits alone are NOT safe, because the container
+    is ephemeral and the only durable copy of the DB lives on GitHub."""
     conn.commit()
-    push_db_to_github()
+    return push_db_to_github()
+
+def save_and_report(success_msg="Saved!"):
+    """Save and surface the real outcome to the user. On failure we never
+    claim success — the change is local-only and at risk until it syncs."""
+    with st.spinner("Saving..."):
+        ok = save()
+    if ok:
+        st.session_state['unsynced'] = False
+        if success_msg:
+            st.success(success_msg)
+    else:
+        st.session_state['unsynced'] = True
+        st.error(
+            "⚠️ Saved on this device, but the **GitHub sync failed** — this change "
+            "is not backed up and may be lost if the app restarts. Check your "
+            "connection and GITHUB_TOKEN, then use **Retry sync** at the top.")
+    return ok
 
 # ─────────────────────────────────────────────
 # QUERY HELPERS
@@ -308,11 +329,17 @@ def set_active_timer(model_id, start_time_str):
     c.execute("DELETE FROM Active_Timer")
     c.execute("INSERT INTO Active_Timer (id, model_id, start_time) VALUES (1,?,?)",
               (model_id, start_time_str))
-    save()
+    ok = save()
+    if not ok:
+        st.session_state['unsynced'] = True
+    return ok
 
 def clear_active_timer():
     c.execute("DELETE FROM Active_Timer")
-    save()
+    ok = save()
+    if not ok:
+        st.session_state['unsynced'] = True
+    return ok
 
 def safe_int(val):
     try:
@@ -377,6 +404,11 @@ with nav_col2:
         st.session_state.page = 'stats'
         st.session_state.selected_model = None
         st.rerun()
+with nav_col3:
+    if st.button("📤 Export", use_container_width=True):
+        st.session_state.page = 'export'
+        st.session_state.selected_model = None
+        st.rerun()
 
 st.divider()
 
@@ -386,6 +418,19 @@ m2.metric("✅ Completed",         completed)
 m3.metric("🔧 In Progress",       in_progress)
 m4.metric("⏱️ Total Hours Built", total_hours)
 m5.metric("📸 Progress Photos",   total_photos)
+
+# If a previous save couldn't reach GitHub, the DB is committed locally but
+# not backed up. Give the user a one-click recovery instead of silent loss.
+if st.session_state.get('unsynced'):
+    uc1, uc2 = st.columns([4, 1])
+    uc1.warning("⚠️ Some changes aren't backed up to GitHub yet — they'll be lost if the app restarts.")
+    with uc2:
+        if st.button("🔁 Retry sync", use_container_width=True, type="primary"):
+            if push_db_to_github():
+                st.session_state['unsynced'] = False
+                st.rerun()
+            else:
+                st.error("Still can't reach GitHub. Check your network and GITHUB_TOKEN.")
 
 st.divider()
 
@@ -447,10 +492,8 @@ if st.session_state.page == 'inventory':
                             (search_id, name_input, cat_input, sheets_val if sheets_val > 0 else None,
                              'Not Started', diff_input, None,
                              str(datetime.now().date())))
-                        with st.spinner("Saving..."):
-                            save()
-                        st.success(f"Added {name_input}!")
-                        st.rerun()
+                        if save_and_report(f"Added {name_input}!"):
+                            st.rerun()
 
     # Filters
     all_models = get_all_models()
@@ -657,6 +700,65 @@ elif st.session_state.page == 'stats':
                 </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+# EXPORT PAGE — get a copy of your data that's yours
+# ─────────────────────────────────────────────
+elif st.session_state.page == 'export':
+    st.markdown("<h2>📤 Export Your Data</h2>", unsafe_allow_html=True)
+    st.markdown(
+        "Your collection lives in this app's database (backed up to GitHub). "
+        "Pull a clean, structured copy that's **fully yours** — drop it into "
+        "Google Sheets, Excel, Numbers, or anything else. Nothing to set up.")
+
+    models_df = get_all_models()
+    logs_df   = pd.read_sql_query("SELECT * FROM Build_Logs ORDER BY model_id, start_time", conn)
+    photos_df = pd.read_sql_query("SELECT * FROM Photos ORDER BY model_id, uploaded_at", conn)
+
+    if models_df.empty and logs_df.empty:
+        st.info("Nothing to export yet — add a model first.")
+    else:
+        stamp = datetime.now().strftime("%Y-%m-%d")
+
+        # One workbook, three tabs (Models / Build Logs / Photos). Google Sheets
+        # imports .xlsx natively, turning each tab into a sheet tab — the closest
+        # thing to "give me a Google Sheet" without any credentials.
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as xl:
+            models_df.to_excel(xl, sheet_name="Models",     index=False)
+            logs_df.to_excel(xl,   sheet_name="Build Logs", index=False)
+            photos_df.to_excel(xl, sheet_name="Photos",     index=False)
+
+        st.markdown("#### 📗 Everything in one spreadsheet")
+        st.download_button(
+            "⬇️  Download Excel workbook (.xlsx)",
+            data=buf.getvalue(),
+            file_name=f"metal_earth_export_{stamp}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", use_container_width=True)
+        st.caption(
+            "**Get it into Google Sheets:** Google Drive → **New → File upload** → pick this "
+            "file → right-click it → **Open with → Google Sheets**. Each table lands on its "
+            "own tab. (Or inside a Sheet: **File → Import → Upload**.)")
+
+        st.divider()
+        st.markdown("#### 📄 Or grab individual tables (CSV)")
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            st.download_button("Models.csv", models_df.to_csv(index=False),
+                f"models_{stamp}.csv", "text/csv", use_container_width=True)
+        with d2:
+            st.download_button("Build Logs.csv", logs_df.to_csv(index=False),
+                f"build_logs_{stamp}.csv", "text/csv", use_container_width=True)
+        with d3:
+            st.download_button("Photos.csv", photos_df.to_csv(index=False),
+                f"photos_{stamp}.csv", "text/csv", use_container_width=True)
+        st.caption("CSVs open anywhere. In Google Sheets: **File → Import → Upload**.")
+
+        st.divider()
+        st.caption(
+            f"Ready to export: **{len(models_df)} models · {len(logs_df)} sessions · "
+            f"{len(photos_df)} photos**. The download is generated fresh from your current data.")
+
+# ─────────────────────────────────────────────
 # WORKBENCH PAGE
 # ─────────────────────────────────────────────
 elif st.session_state.page == 'workbench':
@@ -695,21 +797,25 @@ elif st.session_state.page == 'workbench':
 
         if is_active:
             timer_start_dt = datetime.fromisoformat(active[1])
-            elapsed        = (datetime.now() - timer_start_dt).total_seconds()
-            total_display  = secs_logged + elapsed
 
-            # Big stopwatch display
-            h, rem = divmod(int(elapsed), 3600)
-            m, s   = divmod(rem, 60)
-            st.markdown(f"""
-            <div class='stopwatch'>
-                <div class='stopwatch-label'>Session Time</div>
-                <div class='stopwatch-time'>{h:02d}:{m:02d}:{s:02d}</div>
-                <div class='stopwatch-label' style='margin-top:12px'>Total on this kit: {fmt_seconds(total_display)}</div>
-            </div>""", unsafe_allow_html=True)
-
-            st.markdown("<div style='text-align:center'>Page auto-refreshes every 30 seconds while timer runs</div>",
-                        unsafe_allow_html=True)
+            # Live stopwatch. Streamlit strips <script> from markdown, so the old
+            # JS reload never actually ran. A fragment with run_every re-renders
+            # just this block once a second — a real ticking clock, no full reload.
+            # The *recorded* duration is still derived from the true start time at
+            # Stop, so the logged value is unaffected by how often we re-render.
+            @st.fragment(run_every=1)
+            def _live_stopwatch():
+                elapsed       = (datetime.now() - timer_start_dt).total_seconds()
+                total_display = secs_logged + elapsed
+                h, rem = divmod(int(elapsed), 3600)
+                m, s   = divmod(rem, 60)
+                st.markdown(f"""
+                <div class='stopwatch'>
+                    <div class='stopwatch-label'>Session Time</div>
+                    <div class='stopwatch-time'>{h:02d}:{m:02d}:{s:02d}</div>
+                    <div class='stopwatch-label' style='margin-top:12px'>Total on this kit: {fmt_seconds(total_display)}</div>
+                </div>""", unsafe_allow_html=True)
+            _live_stopwatch()
 
             session_note = st.text_input("Session note (optional)", key="session_note_active")
             stop_col, _ = st.columns([1, 2])
@@ -724,15 +830,11 @@ elif st.session_state.page == 'workbench':
                         (str(datetime.now().date()),
                          'In Progress' if model['status'] == 'Not Started' else model['status'],
                          model_id))
-                    clear_active_timer()
-                    st.success(f"✅ Logged {fmt_seconds(duration)}!")
-                    st.rerun()
-
-            # Auto-refresh every 30s so stopwatch visually updates
-            st.markdown("""
-            <script>
-            setTimeout(function() { window.location.reload(); }, 30000);
-            </script>""", unsafe_allow_html=True)
+                    c.execute("DELETE FROM Active_Timer")
+                    # Single commit+push for the whole session so a failed sync
+                    # is reported instead of silently dropping the logged time.
+                    if save_and_report(f"✅ Logged {fmt_seconds(duration)}!"):
+                        st.rerun()
 
         else:
             # Show total time and start button
@@ -775,10 +877,8 @@ elif st.session_state.page == 'workbench':
                      manual_note, 1 if manual_est else 0))
                 c.execute("UPDATE Models SET last_worked=? WHERE model_id=?",
                           (str(datetime.now().date()), model_id))
-                with st.spinner("Saving..."):
-                    save()
-                st.success("Logged!")
-                st.rerun()
+                if save_and_report("Logged!"):
+                    st.rerun()
 
         st.divider()
         st.markdown("#### 📅 Build History")
@@ -814,10 +914,9 @@ elif st.session_state.page == 'workbench':
                             c.execute(
                                 "UPDATE Build_Logs SET duration=?, notes=?, is_estimate=? WHERE log_id=?",
                                 (new_mins * 60, new_note, 1 if new_est else 0, lid))
-                            with st.spinner("Saving..."):
-                                save()
-                            st.session_state[f"editing_log_{lid}"] = False
-                            st.rerun()
+                            if save_and_report("Saved!"):
+                                st.session_state[f"editing_log_{lid}"] = False
+                                st.rerun()
                     with sc2:
                         if st.button("Cancel", key=f"cancel_log_{lid}"):
                             st.session_state[f"editing_log_{lid}"] = False
@@ -840,9 +939,8 @@ elif st.session_state.page == 'workbench':
                     with rc5:
                         if st.button("🗑️", key=f"del_log_{lid}", help="Delete this session"):
                             c.execute("DELETE FROM Build_Logs WHERE log_id=?", (lid,))
-                            with st.spinner("Saving..."):
-                                save()
-                            st.rerun()
+                            if save_and_report(None):
+                                st.rerun()
 
     # ── TAB: DETAILS ───────────────────────────────
     with tab_details:
@@ -856,20 +954,17 @@ elif st.session_state.page == 'workbench':
             if st.form_submit_button("💾 Save Changes"):
                 c.execute("UPDATE Models SET status=?, rating=?, notes=? WHERE model_id=?",
                           (new_status, new_rating, new_notes, model_id))
-                with st.spinner("Saving..."):
-                    save()
-                st.success("Saved!")
-                st.rerun()
+                if save_and_report("Saved!"):
+                    st.rerun()
 
         if st.button("🗑️ Remove from Collection", type="secondary"):
             c.execute("DELETE FROM Models WHERE model_id=?",     (model_id,))
             c.execute("DELETE FROM Build_Logs WHERE model_id=?", (model_id,))
             c.execute("DELETE FROM Photos WHERE model_id=?",     (model_id,))
-            with st.spinner("Saving..."):
-                save()
-            st.session_state.page = 'inventory'
-            st.session_state.selected_model = None
-            st.rerun()
+            if save_and_report(None):
+                st.session_state.page = 'inventory'
+                st.session_state.selected_model = None
+                st.rerun()
 
     # ── TAB: PHOTOS ────────────────────────────────
     with tab_photos:
@@ -893,10 +988,8 @@ elif st.session_state.page == 'workbench':
                         c.execute(
                             "INSERT INTO Photos (model_id, url, caption, uploaded_at) VALUES (?,?,?,?)",
                             (model_id, url, caption_input, datetime.now().strftime("%Y-%m-%d %H:%M")))
-                        with st.spinner("Saving..."):
-                            save()
-                        st.success("Photo uploaded!")
-                        st.rerun()
+                        if save_and_report("Photo uploaded!"):
+                            st.rerun()
                     else:
                         st.error(f"Upload failed: {err}")
 
@@ -913,6 +1006,5 @@ elif st.session_state.page == 'workbench':
                     st.caption(f"🕐 {photo['uploaded_at']}")
                     if st.button("🗑️", key=f"del_photo_{photo['photo_id']}", help="Delete photo"):
                         c.execute("DELETE FROM Photos WHERE photo_id=?", (photo['photo_id'],))
-                        with st.spinner("Saving..."):
-                            save()
-                        st.rerun()
+                        if save_and_report(None):
+                            st.rerun()
