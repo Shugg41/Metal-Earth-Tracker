@@ -244,7 +244,14 @@ c.execute('''CREATE TABLE IF NOT EXISTS Build_Logs
               model_id    TEXT,
               start_time  TEXT,
               duration    REAL,
-              notes       TEXT)''')
+              notes       TEXT,
+              is_estimate INTEGER DEFAULT 0)''')
+
+# Migration: add is_estimate to pre-existing DBs that don't have it yet
+_existing_cols = [row[1] for row in c.execute("PRAGMA table_info(Build_Logs)").fetchall()]
+if 'is_estimate' not in _existing_cols:
+    c.execute("ALTER TABLE Build_Logs ADD COLUMN is_estimate INTEGER DEFAULT 0")
+    conn.commit()
 
 c.execute('''CREATE TABLE IF NOT EXISTS Photos
              (photo_id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -518,16 +525,27 @@ elif st.session_state.page == 'stats':
         st.info("Add some models to see your stats!")
     else:
         # ── Top row stats ──
-        total_sheets = all_models['sheets'].sum() if 'sheets' in all_models.columns else 0
+        # Split logs: estimates count toward total hours only; real sessions
+        # drive the session count, average, and heatmap.
+        if not all_logs.empty and 'is_estimate' in all_logs.columns:
+            real_logs = all_logs[all_logs['is_estimate'].fillna(0) == 0]
+        else:
+            real_logs = all_logs
+
+        total_sheets     = all_models['sheets'].sum() if 'sheets' in all_models.columns else 0
         total_build_secs = all_logs['duration'].sum() if not all_logs.empty else 0
-        avg_session_mins = round((all_logs['duration'].mean() or 0) / 60, 1) if not all_logs.empty else 0
-        total_sessions   = len(all_logs)
+        avg_session_mins = round((real_logs['duration'].mean() or 0) / 60, 1) if not real_logs.empty else 0
+        total_sessions   = len(real_logs)
+        est_count        = len(all_logs) - len(real_logs)
 
         s1, s2, s3, s4 = st.columns(4)
         s1.metric("🔩 Total Sheets Punched", f"{int(total_sheets or 0)}")
         s2.metric("⏱️ Total Hours Built",    f"{round(total_build_secs/3600, 1)}")
         s3.metric("📋 Total Sessions",        total_sessions)
         s4.metric("⏰ Avg Session Length",    f"{avg_session_mins} min")
+        if est_count:
+            st.caption(f"⚠️ {est_count} estimated/backfilled log{'s' if est_count != 1 else ''} "
+                       f"included in total hours but excluded from session count, average, and the heatmap.")
 
         st.divider()
 
@@ -573,10 +591,11 @@ elif st.session_state.page == 'stats':
         st.divider()
 
         # ── Build heatmap (last 12 weeks) ──
-        if not all_logs.empty:
+        if not real_logs.empty:
             st.markdown("#### 🗓️ Build Activity")
-            all_logs['date'] = pd.to_datetime(all_logs['start_time']).dt.date
-            daily = all_logs.groupby('date')['duration'].sum().reset_index()
+            heatmap_logs = real_logs.copy()
+            heatmap_logs['date'] = pd.to_datetime(heatmap_logs['start_time']).dt.date
+            daily = heatmap_logs.groupby('date')['duration'].sum().reset_index()
             daily.columns = ['date', 'seconds']
 
             import datetime as dt
@@ -738,10 +757,14 @@ elif st.session_state.page == 'workbench':
         with st.form("manual_log"):
             manual_mins = st.number_input("Minutes", min_value=1, value=30)
             manual_note = st.text_input("Note")
+            manual_est  = st.checkbox(
+                "This is an estimate / bulk backfill",
+                help="Counts toward total hours, but excluded from session count, average, and the heatmap.")
             if st.form_submit_button("Log Manual Session"):
                 c.execute(
-                    "INSERT INTO Build_Logs (model_id, start_time, duration, notes) VALUES (?,?,?,?)",
-                    (model_id, datetime.now().strftime("%Y-%m-%d %H:%M"), manual_mins * 60, manual_note))
+                    "INSERT INTO Build_Logs (model_id, start_time, duration, notes, is_estimate) VALUES (?,?,?,?,?)",
+                    (model_id, datetime.now().strftime("%Y-%m-%d %H:%M"), manual_mins * 60,
+                     manual_note, 1 if manual_est else 0))
                 c.execute("UPDATE Models SET last_worked=? WHERE model_id=?",
                           (str(datetime.now().date()), model_id))
                 with st.spinner("Saving..."):
@@ -773,12 +796,16 @@ elif st.session_state.page == 'workbench':
                     with ec2:
                         new_note = st.text_input(
                             "Note", value=log['notes'] or "", key=f"edit_note_{lid}")
+                    new_est = st.checkbox(
+                        "Estimate / bulk backfill (excluded from average, session count, heatmap)",
+                        value=bool(log['is_estimate']) if 'is_estimate' in log and pd.notna(log['is_estimate']) else False,
+                        key=f"edit_est_{lid}")
                     sc1, sc2, _ = st.columns([1, 1, 3])
                     with sc1:
                         if st.button("💾 Save", key=f"save_log_{lid}", type="primary"):
                             c.execute(
-                                "UPDATE Build_Logs SET duration=?, notes=? WHERE log_id=?",
-                                (new_mins * 60, new_note, lid))
+                                "UPDATE Build_Logs SET duration=?, notes=?, is_estimate=? WHERE log_id=?",
+                                (new_mins * 60, new_note, 1 if new_est else 0, lid))
                             with st.spinner("Saving..."):
                                 save()
                             st.session_state[f"editing_log_{lid}"] = False
@@ -789,10 +816,12 @@ elif st.session_state.page == 'workbench':
                             st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
                 else:
+                    is_est = bool(log['is_estimate']) if 'is_estimate' in log and pd.notna(log['is_estimate']) else False
                     rc1, rc2, rc3, rc4, rc5 = st.columns([2, 1.2, 3, 0.6, 0.6])
                     rc1.markdown(f"<span style='color:#888;font-size:0.85rem'>{log['start_time']}</span>",
                                  unsafe_allow_html=True)
-                    rc2.markdown(f"<span style='color:#c8a84b;font-weight:600'>{fmt_seconds(log['duration'])}</span>",
+                    est_badge = " <span style='background:#3a2a00;color:#c8a84b;font-size:0.6rem;padding:1px 5px;border-radius:4px;letter-spacing:1px'>EST</span>" if is_est else ""
+                    rc2.markdown(f"<span style='color:#c8a84b;font-weight:600'>{fmt_seconds(log['duration'])}</span>{est_badge}",
                                  unsafe_allow_html=True)
                     rc3.markdown(f"<span style='color:#e0e0e0;font-size:0.85rem'>{log['notes'] or '—'}</span>",
                                  unsafe_allow_html=True)
