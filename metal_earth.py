@@ -755,10 +755,57 @@ elif st.session_state.page == 'workbench':
         if logs.empty:
             st.info("No sessions logged yet.")
         else:
-            logs_display = logs[['start_time', 'duration', 'notes']].copy()
-            logs_display['duration'] = logs_display['duration'].apply(fmt_seconds)
-            logs_display.columns = ['Date/Time', 'Duration', 'Notes']
-            st.dataframe(logs_display, use_container_width=True, hide_index=True)
+            for _, log in logs.iterrows():
+                lid = int(log['log_id'])
+                editing = st.session_state.get(f"editing_log_{lid}", False)
+
+                if editing:
+                    st.markdown(
+                        "<div style='background:#1c1c1c;border:1px solid #c8a84b;"
+                        "border-radius:8px;padding:12px;margin-bottom:8px'>",
+                        unsafe_allow_html=True)
+                    ec1, ec2 = st.columns([1, 2])
+                    with ec1:
+                        new_mins = st.number_input(
+                            "Minutes", min_value=0.0, step=1.0,
+                            value=round(log['duration'] / 60, 1),
+                            key=f"edit_mins_{lid}")
+                    with ec2:
+                        new_note = st.text_input(
+                            "Note", value=log['notes'] or "", key=f"edit_note_{lid}")
+                    sc1, sc2, _ = st.columns([1, 1, 3])
+                    with sc1:
+                        if st.button("💾 Save", key=f"save_log_{lid}", type="primary"):
+                            c.execute(
+                                "UPDATE Build_Logs SET duration=?, notes=? WHERE log_id=?",
+                                (new_mins * 60, new_note, lid))
+                            with st.spinner("Saving..."):
+                                save()
+                            st.session_state[f"editing_log_{lid}"] = False
+                            st.rerun()
+                    with sc2:
+                        if st.button("Cancel", key=f"cancel_log_{lid}"):
+                            st.session_state[f"editing_log_{lid}"] = False
+                            st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+                else:
+                    rc1, rc2, rc3, rc4, rc5 = st.columns([2, 1.2, 3, 0.6, 0.6])
+                    rc1.markdown(f"<span style='color:#888;font-size:0.85rem'>{log['start_time']}</span>",
+                                 unsafe_allow_html=True)
+                    rc2.markdown(f"<span style='color:#c8a84b;font-weight:600'>{fmt_seconds(log['duration'])}</span>",
+                                 unsafe_allow_html=True)
+                    rc3.markdown(f"<span style='color:#e0e0e0;font-size:0.85rem'>{log['notes'] or '—'}</span>",
+                                 unsafe_allow_html=True)
+                    with rc4:
+                        if st.button("✏️", key=f"edit_btn_{lid}", help="Edit this session"):
+                            st.session_state[f"editing_log_{lid}"] = True
+                            st.rerun()
+                    with rc5:
+                        if st.button("🗑️", key=f"del_log_{lid}", help="Delete this session"):
+                            c.execute("DELETE FROM Build_Logs WHERE log_id=?", (lid,))
+                            with st.spinner("Saving..."):
+                                save()
+                            st.rerun()
 
     # ── TAB: DETAILS ───────────────────────────────
     with tab_details:
