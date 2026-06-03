@@ -785,65 +785,18 @@ elif st.session_state.page == 'stats':
 elif st.session_state.page == 'export':
     st.markdown("<h2>📤 Export Your Data</h2>", unsafe_allow_html=True)
     st.markdown(
-        "Your collection lives in this app's database (backed up to GitHub). "
-        "Pull a clean, structured copy that's **fully yours** — drop it into "
-        "Google Sheets, Excel, Numbers, or anything else. Nothing to set up.")
+        "Your collection, always in sync with your Google Sheet.")
 
     models_df = get_all_models()
     logs_df   = pd.read_sql_query("SELECT * FROM Build_Logs ORDER BY model_id, start_time", conn)
     photos_df = pd.read_sql_query("SELECT * FROM Photos ORDER BY model_id, uploaded_at", conn)
 
-    if models_df.empty and logs_df.empty:
-        st.info("Nothing to export yet — add a model first.")
-    else:
-        stamp = datetime.now().strftime("%Y-%m-%d")
-
-        # One workbook, three tabs (Models / Build Logs / Photos). Google Sheets
-        # imports .xlsx natively, turning each tab into a sheet tab — the closest
-        # thing to "give me a Google Sheet" without any credentials.
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as xl:
-            models_df.to_excel(xl, sheet_name="Models",     index=False)
-            logs_df.to_excel(xl,   sheet_name="Build Logs", index=False)
-            photos_df.to_excel(xl, sheet_name="Photos",     index=False)
-
-        st.markdown("#### 📗 Everything in one spreadsheet")
-        st.download_button(
-            "⬇️  Download Excel workbook (.xlsx)",
-            data=buf.getvalue(),
-            file_name=f"metal_earth_export_{stamp}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary", use_container_width=True)
-        st.caption(
-            "**Get it into Google Sheets:** Google Drive → **New → File upload** → pick this "
-            "file → right-click it → **Open with → Google Sheets**. Each table lands on its "
-            "own tab. (Or inside a Sheet: **File → Import → Upload**.)")
-
-        st.divider()
-        st.markdown("#### 📄 Or grab individual tables (CSV)")
-        d1, d2, d3 = st.columns(3)
-        with d1:
-            st.download_button("Models.csv", models_df.to_csv(index=False),
-                f"models_{stamp}.csv", "text/csv", use_container_width=True)
-        with d2:
-            st.download_button("Build Logs.csv", logs_df.to_csv(index=False),
-                f"build_logs_{stamp}.csv", "text/csv", use_container_width=True)
-        with d3:
-            st.download_button("Photos.csv", photos_df.to_csv(index=False),
-                f"photos_{stamp}.csv", "text/csv", use_container_width=True)
-        st.caption("CSVs open anywhere. In Google Sheets: **File → Import → Upload**.")
-
-        st.divider()
-        st.caption(
-            f"Ready to export: **{len(models_df)} models · {len(logs_df)} sessions · "
-            f"{len(photos_df)} photos**. The download is generated fresh from your current data.")
-
-    # ── Live Google Sheet sync (optional) ──────────────────────
-    st.divider()
-    st.markdown("<h3>🔄 Live Google Sheet sync</h3>", unsafe_allow_html=True)
-
+    # ── Google Sheet sync — primary ─────────────────────────────
+    st.markdown("<h3>🔄 Google Sheet sync</h3>", unsafe_allow_html=True)
     if gsheet_webhook():
         st.success("✅ Connected — your sheet auto-updates on every save.")
+        st.caption(
+            f"{len(models_df)} models · {len(logs_df)} sessions · {len(photos_df)} photos")
         if st.button("🔄 Sync now", type="primary"):
             with st.spinner("Pushing to your Google Sheet..."):
                 ok, msg = sync_to_sheet()
@@ -853,9 +806,8 @@ elif st.session_state.page == 'export':
                 st.error(f"Sync failed: {msg}")
     else:
         st.info("Not connected yet. Set it up once below, then it stays in sync automatically.")
-
-    with st.expander("⚙️ One-time setup (about 5 minutes)"):
-        st.markdown("""
+        with st.expander("⚙️ One-time setup (about 5 minutes)"):
+            st.markdown("""
 **1.** Create (or open) a Google Sheet you want your data mirrored into.
 
 **2.** In that sheet: **Extensions → Apps Script**. Delete whatever's there and paste the script below. *(Optional: set `SECRET` to any password to lock down your webhook.)*
@@ -870,10 +822,39 @@ GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/XXXX/exec"
 # GSHEET_SECRET = "the-same-password-as-SECRET"   # only if you set one
 ```
 
-**6.** Reload this app and hit **Sync now**. Every save after that updates the sheet automatically. Each table (Models / Build Logs / Photos) becomes its own tab.
+**6.** Reload this app and hit **Sync now**. Every save after that updates the sheet automatically.
 """)
-        st.caption("Paste this into Apps Script:")
-        st.code(APPS_SCRIPT_CODE, language="javascript")
+            st.caption("Paste this into Apps Script:")
+            st.code(APPS_SCRIPT_CODE, language="javascript")
+
+    # ── Download backup (collapsed) ─────────────────────────────
+    st.divider()
+    with st.expander("⬇️ Download a backup copy"):
+        if models_df.empty and logs_df.empty:
+            st.info("Nothing to export yet.")
+        else:
+            stamp = datetime.now().strftime("%Y-%m-%d")
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as xl:
+                models_df.to_excel(xl, sheet_name="Models",     index=False)
+                logs_df.to_excel(xl,   sheet_name="Build Logs", index=False)
+                photos_df.to_excel(xl, sheet_name="Photos",     index=False)
+            st.download_button(
+                "⬇️ Excel workbook (.xlsx) — Models, Build Logs, Photos",
+                data=buf.getvalue(),
+                file_name=f"metal_earth_export_{stamp}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True)
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                st.download_button("Models.csv", models_df.to_csv(index=False),
+                    f"models_{stamp}.csv", "text/csv", use_container_width=True)
+            with d2:
+                st.download_button("Build Logs.csv", logs_df.to_csv(index=False),
+                    f"build_logs_{stamp}.csv", "text/csv", use_container_width=True)
+            with d3:
+                st.download_button("Photos.csv", photos_df.to_csv(index=False),
+                    f"photos_{stamp}.csv", "text/csv", use_container_width=True)
 
 # ─────────────────────────────────────────────
 # WORKBENCH PAGE
