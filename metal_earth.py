@@ -447,9 +447,15 @@ def fmt_seconds(secs):
 # NAVIGATION STATE
 # ─────────────────────────────────────────────
 if 'page' not in st.session_state:
-    st.session_state.page = 'inventory'
-if 'selected_model' not in st.session_state:
-    st.session_state.selected_model = None
+    # On first load, jump straight to the workbench if there's one active build.
+    in_progress = pd.read_sql_query(
+        "SELECT model_id FROM Models WHERE status='In Progress' LIMIT 2", conn)
+    if len(in_progress) == 1:
+        st.session_state.page = 'workbench'
+        st.session_state.selected_model = in_progress.iloc[0]['model_id']
+    else:
+        st.session_state.page = 'inventory'
+        st.session_state.selected_model = None
 
 # ─────────────────────────────────────────────
 # HEADER & GLOBAL STATS
