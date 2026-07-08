@@ -15,140 +15,204 @@ st.set_page_config(page_title="Metal Earth Workbench", layout="wide", page_icon=
 
 st.markdown("""
 <style>
-/* ── Dark industrial base ── */
-html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
-    background-color: #0e0e0e !important;
-    color: #e0e0e0 !important;
+/* ── Theme: black + hunter green (all colors defined here) ── */
+:root {
+    --bg:           #0c0e0c;   /* near-black, faint green cast */
+    --surface:      #151a15;   /* cards, buttons, inputs */
+    --surface2:     #182018;   /* zero-intensity heatmap, hover */
+    --border:       #263226;   /* dark green-gray lines */
+    --accent:       #7fae7a;   /* light hunter green — text & lines on black */
+    --accent-deep:  #3f6f4f;   /* dark hunter green — fills */
+    --accent-hover: #8fbe8a;
+    --khaki:        #b3a878;   /* camo tan — badges, secondary */
+    --amber:        #d9a441;   /* In Progress */
+    --done:         #66bb6a;   /* Completed */
+    --text:         #e0e0e0;
+    --muted:        #888;
 }
-[data-testid="stSidebar"] { background-color: #1a1a1a !important; }
-[data-testid="stHeader"]  { background-color: #0e0e0e !important; }
+
+/* ── Dark base ── */
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    background-color: var(--bg) !important;
+    color: var(--text) !important;
+}
+[data-testid="stSidebar"] { background-color: var(--surface) !important; }
+[data-testid="stHeader"]  { background-color: var(--bg) !important; }
+
+/* ── Phone-first density ── */
+.block-container { padding-top: 2.2rem !important; padding-bottom: 2rem !important; }
+hr { border-color: var(--border) !important; margin: 0.6rem 0 !important; }
+[data-testid="stToolbar"] { display: none !important; }  /* hide Deploy/menu chrome */
 
 /* ── Headings ── */
-h1, h2, h3, h4 { color: #c8a84b !important; font-family: 'Georgia', serif; letter-spacing: 1px; }
+h1, h2, h3, h4 { color: var(--accent) !important; font-family: 'Georgia', serif; letter-spacing: 1px; }
+h2 { font-size: 1.35rem !important; }
 
-/* ── Metric tiles ── */
+/* ── One-line header widgets ── */
+.brand-line { color: var(--accent); font-family: 'Georgia', serif; font-size: 1.1rem;
+              font-weight: 700; letter-spacing: 1px; margin: 0; }
+.stats-line { color: var(--muted); font-size: 0.8rem; margin: 2px 0 8px 0; }
+.stats-line b { color: var(--khaki); font-weight: 600; }
+
+/* ── Keyed nowrap containers: keep their columns on ONE row on phones ──
+   Streamlit stacks columns below ~640px; for containers whose key starts
+   with "nowrap" we keep the row layout (nav bar, back row, log rows). */
+div[class*="st-key-nowrap"] [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 0.4rem !important;
+}
+div[class*="st-key-nowrap"] [data-testid="stColumn"],
+div[class*="st-key-nowrap"] [data-testid="column"] {
+    width: auto !important;
+    min-width: 0 !important;
+}
+div[class*="st-key-nowrap"] .stButton > button {
+    padding: 0.25rem 0.4rem !important;
+    font-size: 0.85rem !important;
+}
+
+/* ── Metric tiles (Stats page) ── */
 [data-testid="stMetric"] {
-    background: #1c1c1c;
-    border: 1px solid #333;
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px 16px;
 }
-[data-testid="stMetricLabel"] { color: #888 !important; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; }
-[data-testid="stMetricValue"] { color: #c8a84b !important; font-size: 1.6rem; font-weight: 700; }
+[data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; }
+[data-testid="stMetricValue"] { color: var(--accent) !important; font-size: 1.6rem; font-weight: 700; }
 
 /* ── Buttons ── */
 .stButton > button {
-    background: #1c1c1c !important;
-    color: #c8a84b !important;
-    border: 1px solid #c8a84b !important;
+    background: var(--surface) !important;
+    color: var(--accent) !important;
+    border: 1px solid var(--accent-deep) !important;
     border-radius: 6px !important;
     font-weight: 600 !important;
     transition: all 0.2s !important;
 }
 .stButton > button:hover {
-    background: #c8a84b !important;
-    color: #0e0e0e !important;
+    background: var(--accent-deep) !important;
+    color: #eaf5e8 !important;
 }
 /* Primary buttons */
 .stButton > button[kind="primary"] {
-    background: #c8a84b !important;
-    color: #0e0e0e !important;
-    border: 1px solid #c8a84b !important;
+    background: var(--accent-deep) !important;
+    color: #eaf5e8 !important;
+    border: 1px solid var(--accent-deep) !important;
 }
 .stButton > button[kind="primary"]:hover {
-    background: #e5c76b !important;
+    background: var(--accent) !important;
+    color: #0c0e0c !important;
 }
 
 /* ── Inputs ── */
 input, textarea, [data-baseweb="select"] {
-    background-color: #1c1c1c !important;
-    color: #e0e0e0 !important;
-    border-color: #333 !important;
+    background-color: var(--surface) !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
     border-radius: 6px !important;
 }
 
 /* ── Tabs ── */
-[data-testid="stTabs"] button {
-    color: #888 !important;
+[data-testid="stTabs"] [role="tab"], [data-testid="stTabs"] [role="tab"] p {
+    color: var(--muted) !important;
     font-weight: 600 !important;
     letter-spacing: 0.5px;
 }
-[data-testid="stTabs"] button[aria-selected="true"] {
-    color: #c8a84b !important;
-    border-bottom: 2px solid #c8a84b !important;
+[data-testid="stTabs"] [role="tab"][aria-selected="true"],
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] p {
+    color: var(--accent) !important;
 }
+[data-baseweb="tab-highlight"] { background-color: var(--accent) !important; }
+[data-baseweb="tab-border"]    { background-color: var(--border) !important; }
 
 /* ── Expanders ── */
 [data-testid="stExpander"] {
-    background: #1c1c1c !important;
-    border: 1px solid #2a2a2a !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
     border-radius: 8px !important;
 }
 
-/* ── Divider ── */
-hr { border-color: #2a2a2a !important; }
-
 /* ── Model cards ── */
 .model-card {
-    background: #1c1c1c;
-    border: 1px solid #2a2a2a;
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 14px 18px;
-    margin-bottom: 8px;
-    cursor: pointer;
+    padding: 10px 14px;
+    margin-bottom: 6px;
     transition: border-color 0.2s, background 0.2s;
 }
-.model-card:hover { border-color: #c8a84b; background: #222; }
-.model-card-title { color: #e0e0e0; font-size: 1rem; font-weight: 600; margin-bottom: 4px; }
-.model-card-meta  { color: #888; font-size: 0.78rem; }
-.model-card-status-inprogress { color: #f0a500; font-weight: 700; }
-.model-card-status-completed  { color: #4caf50; font-weight: 700; }
-.model-card-status-notstarted { color: #666;    font-weight: 700; }
-.model-card-status-onhold     { color: #888;    font-weight: 700; }
+.model-card:hover { border-color: var(--accent); background: var(--surface2); }
+.model-card-title { color: var(--text); font-size: 1rem; font-weight: 600; margin-bottom: 3px; }
+.model-card-meta  { color: var(--muted); font-size: 0.78rem; }
 
 /* ── Currently building banner ── */
 .building-banner {
-    background: linear-gradient(135deg, #1a1400, #2a2000);
-    border: 2px solid #c8a84b;
+    background: linear-gradient(135deg, #101810, #1a2a1a);
+    border: 2px solid var(--accent-deep);
     border-radius: 12px;
-    padding: 16px 20px;
-    margin-bottom: 16px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
 }
-.building-banner-title { color: #c8a84b; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }
+.building-banner-title { color: var(--accent); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }
 .building-banner-name  { color: #fff; font-size: 1.1rem; font-weight: 700; }
 
 /* ── Stopwatch display ── */
 .stopwatch {
-    background: #111;
-    border: 2px solid #c8a84b;
+    background: #0e120e;
+    border: 2px solid var(--accent-deep);
     border-radius: 16px;
     text-align: center;
-    padding: 32px;
-    margin: 16px 0;
+    padding: 26px;
+    margin: 12px 0;
 }
 .stopwatch-time {
-    font-size: 4rem;
+    font-size: 2.6rem;
     font-weight: 700;
-    color: #c8a84b;
+    color: var(--accent);
     font-family: 'Courier New', monospace;
-    letter-spacing: 4px;
+    letter-spacing: 2px;
+    white-space: nowrap;
 }
-.stopwatch-label { color: #666; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; margin-top: 8px; }
+.stopwatch-label { color: #667a66; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; margin-top: 8px; }
 
-/* ── Stats cards ── */
+/* ── Stats cards / chips ── */
 .stat-card {
-    background: #1c1c1c;
-    border: 1px solid #2a2a2a;
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 20px;
     text-align: center;
     margin-bottom: 12px;
 }
-.stat-card-value { color: #c8a84b; font-size: 2rem; font-weight: 700; }
-.stat-card-label { color: #888; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+.stat-card-value { color: var(--accent); font-size: 2rem; font-weight: 700; }
+.stat-card-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+.stat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+.stat-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    flex: 1 1 28%;
+    text-align: center;
+}
+.stat-chip-value { color: var(--accent); font-size: 1.15rem; font-weight: 700; }
+.stat-chip-label { color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; }
+
+/* ── Journal timeline ── */
+.journal-entry {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-deep);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+}
+.journal-date { color: var(--khaki); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; }
+.journal-body { color: var(--text); font-size: 0.9rem; margin-top: 3px; }
 
 /* ── Dataframe ── */
-[data-testid="stDataFrame"] { border: 1px solid #2a2a2a !important; border-radius: 8px !important; }
+[data-testid="stDataFrame"] { border: 1px solid var(--border) !important; border-radius: 8px !important; }
 
 /* ── Success/info/warning ── */
 [data-testid="stAlert"] { border-radius: 8px !important; }
@@ -268,7 +332,23 @@ c.execute('''CREATE TABLE IF NOT EXISTS Active_Timer
               model_id   TEXT,
               start_time TEXT)''')
 
+# Small key-value store for app state (e.g. last opened model)
+c.execute('''CREATE TABLE IF NOT EXISTS App_State
+             (key   TEXT PRIMARY KEY,
+              value TEXT)''')
+
 conn.commit()
+
+def get_app_state(key):
+    row = c.execute("SELECT value FROM App_State WHERE key=?", (key,)).fetchone()
+    return row[0] if row else None
+
+def set_app_state(key, value):
+    # Local commit only — not worth a GitHub commit per navigation. The value
+    # becomes durable whenever the next real save pushes the DB.
+    if get_app_state(key) != value:
+        c.execute("INSERT OR REPLACE INTO App_State (key, value) VALUES (?,?)", (key, value))
+        conn.commit()
 
 # ─────────────────────────────────────────────
 # SAVE HELPER
@@ -446,13 +526,28 @@ def fmt_seconds(secs):
 # ─────────────────────────────────────────────
 # NAVIGATION STATE
 # ─────────────────────────────────────────────
+def _model_exists(mid):
+    return mid and c.execute("SELECT 1 FROM Models WHERE model_id=?", (mid,)).fetchone()
+
 if 'page' not in st.session_state:
-    # On first load, jump straight to the workbench if there's one active build.
-    in_progress = pd.read_sql_query(
-        "SELECT model_id FROM Models WHERE status='In Progress' LIMIT 2", conn)
-    if len(in_progress) == 1:
+    # Timer first: on app open, land on the stopwatch of the model you're
+    # working on. Priority: running timer → last opened → single In Progress.
+    timer_row = get_active_timer()
+    land_on = None
+    if timer_row and _model_exists(timer_row[0]):
+        land_on = timer_row[0]
+    if not land_on:
+        last_opened = get_app_state('last_opened_model')
+        if _model_exists(last_opened):
+            land_on = last_opened
+    if not land_on:
+        in_progress = pd.read_sql_query(
+            "SELECT model_id FROM Models WHERE status='In Progress' LIMIT 2", conn)
+        if len(in_progress) == 1:
+            land_on = in_progress.iloc[0]['model_id']
+    if land_on:
         st.session_state.page = 'workbench'
-        st.session_state.selected_model = in_progress.iloc[0]['model_id']
+        st.session_state.selected_model = land_on
     else:
         st.session_state.page = 'inventory'
         st.session_state.selected_model = None
@@ -470,40 +565,49 @@ if active_timer:
     live_elapsed   = (datetime.now() - timer_start_dt).total_seconds()
     total_secs_db += live_elapsed
 
-total_hours  = round(total_secs_db / 3600, 1)
-completed    = len(all_models[all_models['status'] == 'Completed'])    if not all_models.empty else 0
-in_progress  = len(all_models[all_models['status'] == 'In Progress'])  if not all_models.empty else 0
-total_owned  = len(all_models)
-total_photos = pd.read_sql_query("SELECT COUNT(*) as n FROM Photos", conn)['n'].iloc[0] or 0
+total_hours = round(total_secs_db / 3600, 1)
+completed   = len(all_models[all_models['status'] == 'Completed']) if not all_models.empty else 0
 
-st.markdown("<h1 style='margin-bottom:0'>⚙️ Metal Earth Workbench</h1>", unsafe_allow_html=True)
+# Compact one-line header: brand + hours/completed. Everything else lives on Stats.
+st.markdown(f"""
+<div class='brand-line'>⚙️ Metal Earth Workbench</div>
+<div class='stats-line'>⏱ <b>{total_hours}h</b> built &nbsp;·&nbsp; ✅ <b>{completed}</b> done</div>
+""", unsafe_allow_html=True)
 
-# Top nav
-nav_col1, nav_col2, nav_col3, nav_spacer = st.columns([1, 1, 1, 5])
-with nav_col1:
-    if st.button("📦 Collection", use_container_width=True):
-        st.session_state.page = 'inventory'
-        st.session_state.selected_model = None
-        st.rerun()
-with nav_col2:
-    if st.button("📊 Stats", use_container_width=True):
-        st.session_state.page = 'stats'
-        st.session_state.selected_model = None
-        st.rerun()
-with nav_col3:
-    if st.button("📤 Export", use_container_width=True):
-        st.session_state.page = 'export'
-        st.session_state.selected_model = None
-        st.rerun()
+# Top nav — nowrap keyed container keeps these on one row on phones.
+# "⏱ Build" jumps back to the model you're working on, from anywhere.
+build_target = None
+_timer_row = get_active_timer()
+if _timer_row and _model_exists(_timer_row[0]):
+    build_target = _timer_row[0]
+elif _model_exists(get_app_state('last_opened_model')):
+    build_target = get_app_state('last_opened_model')
 
-st.divider()
-
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("🗂️ Total Owned",      total_owned)
-m2.metric("✅ Completed",         completed)
-m3.metric("🔧 In Progress",       in_progress)
-m4.metric("⏱️ Total Hours Built", total_hours)
-m5.metric("📸 Progress Photos",   total_photos)
+with st.container(key="nowrap_topnav"):
+    if build_target:
+        nb, n1, n2, n3 = st.columns(4)
+        with nb:
+            if st.button("⏱ Build", use_container_width=True, type="primary"):
+                st.session_state.page = 'workbench'
+                st.session_state.selected_model = build_target
+                st.rerun()
+    else:
+        n1, n2, n3 = st.columns(3)
+    with n1:
+        if st.button("📦 Kits", use_container_width=True):
+            st.session_state.page = 'inventory'
+            st.session_state.selected_model = None
+            st.rerun()
+    with n2:
+        if st.button("📊 Stats", use_container_width=True):
+            st.session_state.page = 'stats'
+            st.session_state.selected_model = None
+            st.rerun()
+    with n3:
+        if st.button("📤 Export", use_container_width=True):
+            st.session_state.page = 'export'
+            st.session_state.selected_model = None
+            st.rerun()
 
 # If a previous save couldn't reach GitHub, the DB is committed locally but
 # not backed up. Give the user a one-click recovery instead of silent loss.
@@ -525,29 +629,27 @@ st.divider()
 # ─────────────────────────────────────────────
 if st.session_state.page == 'inventory':
 
-    # ── Currently Building banner ──
+    # ── Currently Building banner (full-width, phone-friendly) ──
     in_progress_models = all_models[all_models['status'] == 'In Progress'] if not all_models.empty else pd.DataFrame()
     if not in_progress_models.empty:
-        st.markdown("<div style='color:#c8a84b;font-size:0.7rem;text-transform:uppercase;letter-spacing:2px;margin-bottom:8px'>🔧 Currently Building</div>", unsafe_allow_html=True)
-        banner_cols = st.columns(len(in_progress_models.head(3)))
-        for idx, (_, brow) in enumerate(in_progress_models.head(3).iterrows()):
-            with banner_cols[idx]:
-                secs = total_time_seconds(brow['model_id'])
-                # Add live timer if this model is active
-                if active_timer and active_timer[0] == brow['model_id']:
-                    timer_start_dt = datetime.fromisoformat(active_timer[1])
-                    secs += (datetime.now() - timer_start_dt).total_seconds()
-                time_str = fmt_seconds(secs) if secs > 0 else "Not started"
-                st.markdown(f"""
-                <div class='building-banner'>
-                    <div class='building-banner-title'>In Progress</div>
-                    <div class='building-banner-name'>{brow['name']}</div>
-                    <div style='color:#888;font-size:0.8rem;margin-top:4px'>⏱ {time_str} logged</div>
-                </div>""", unsafe_allow_html=True)
-                if st.button(f"Open {brow['model_id']}", key=f"banner_{brow['model_id']}"):
-                    st.session_state.selected_model = brow['model_id']
-                    st.session_state.page = 'workbench'
-                    st.rerun()
+        st.markdown("<div style='color:var(--accent);font-size:0.7rem;text-transform:uppercase;letter-spacing:2px;margin-bottom:8px'>🔧 Currently Building</div>", unsafe_allow_html=True)
+        for _, brow in in_progress_models.head(3).iterrows():
+            secs = total_time_seconds(brow['model_id'])
+            # Add live timer if this model is active
+            if active_timer and active_timer[0] == brow['model_id']:
+                timer_start_dt = datetime.fromisoformat(active_timer[1])
+                secs += (datetime.now() - timer_start_dt).total_seconds()
+            time_str = fmt_seconds(secs) if secs > 0 else "Not started"
+            st.markdown(f"""
+            <div class='building-banner'>
+                <div class='building-banner-title'>In Progress</div>
+                <div class='building-banner-name'>{brow['name']}</div>
+                <div style='color:#888;font-size:0.8rem;margin-top:4px'>⏱ {time_str} logged</div>
+            </div>""", unsafe_allow_html=True)
+            if st.button(f"▶ Open {brow['name']}", key=f"banner_{brow['model_id']}", use_container_width=True):
+                st.session_state.selected_model = brow['model_id']
+                st.session_state.page = 'workbench'
+                st.rerun()
         st.divider()
 
     st.markdown("<h2>📦 My Collection</h2>", unsafe_allow_html=True)
@@ -581,15 +683,12 @@ if st.session_state.page == 'inventory':
                         if save_and_report(f"Added {name_input}!"):
                             st.rerun()
 
-    # Filters
+    # Filters — collapsed by default to keep the phone view short
     all_models = get_all_models()
-    col_f1, col_f2, col_f3 = st.columns(3)
-    with col_f1:
+    with st.expander("🔍 Filter & sort"):
         status_filter = st.selectbox("Filter by Status", ['All'] + STATUS_OPTIONS)
-    with col_f2:
         cats = ['All'] + sorted(all_models['category'].dropna().unique().tolist()) if not all_models.empty else ['All']
         cat_filter = st.selectbox("Filter by Category", cats)
-    with col_f3:
         sort_by = st.selectbox("Sort by", ['Last Worked', 'Name', 'Difficulty', 'Category', 'Status'])
 
     display_df = all_models.copy()
@@ -605,41 +704,37 @@ if st.session_state.page == 'inventory':
     if display_df.empty:
         st.info("No models yet — add one above!")
     else:
-        # Model cards — 2 columns
-        card_cols = st.columns(2)
-        for i, (_, row) in enumerate(display_df.iterrows()):
-            with card_cols[i % 2]:
-                emoji      = STATUS_EMOJI.get(row['status'], '⬜')
-                sheets_str = f"{row['sheets']}sh" if pd.notna(row.get('sheets')) and row.get('sheets') else '?sh'
-                diff_str   = row['difficulty'] if row['difficulty'] else '—'
-                photos     = get_photos(row['model_id'])
-                photo_icon = " 📸" if not photos.empty else ""
-                secs       = total_time_seconds(row['model_id'])
-                time_str   = fmt_seconds(secs) if secs > 0 else "No time logged"
+        # Model cards — single-column compact list (phone-first)
+        for _, row in display_df.iterrows():
+            emoji      = STATUS_EMOJI.get(row['status'], '⬜')
+            diff_str   = row['difficulty'] if row['difficulty'] else '—'
+            photos     = get_photos(row['model_id'])
+            photo_icon = " 📸" if not photos.empty else ""
+            secs       = total_time_seconds(row['model_id'])
+            time_str   = fmt_seconds(secs) if secs > 0 else "—"
 
-                # Is this the active timer model?
-                timer_icon = ""
-                if active_timer and active_timer[0] == row['model_id']:
-                    timer_icon = " ⏱️"
+            # Is this the active timer model?
+            timer_icon = ""
+            if active_timer and active_timer[0] == row['model_id']:
+                timer_icon = " ⏱️"
 
-                status_color = {
-                    'In Progress': '#f0a500', 'Completed': '#4caf50',
-                    'Not Started': '#666',    'On Hold': '#888'
-                }.get(row['status'], '#666')
+            status_color = {
+                'In Progress': 'var(--amber)', 'Completed': 'var(--done)',
+                'Not Started': '#666',    'On Hold': '#888'
+            }.get(row['status'], '#666')
 
-                st.markdown(f"""
-                <div class='model-card'>
-                    <div class='model-card-title'>{emoji} {row['name']}{photo_icon}{timer_icon}</div>
-                    <div class='model-card-meta'>
-                        {row['model_id']} &nbsp;·&nbsp; {row['category'] or '—'} &nbsp;·&nbsp; {diff_str} &nbsp;·&nbsp; {sheets_str}
-                    </div>
-                    <div style='margin-top:6px;font-size:0.8rem;color:{status_color};font-weight:600'>{row['status']}</div>
-                    <div style='font-size:0.75rem;color:#555;margin-top:2px'>⏱ {time_str}</div>
-                </div>""", unsafe_allow_html=True)
-                if st.button("Open →", key=f"btn_{row['model_id']}", use_container_width=True):
-                    st.session_state.selected_model = row['model_id']
-                    st.session_state.page = 'workbench'
-                    st.rerun()
+            st.markdown(f"""
+            <div class='model-card'>
+                <div class='model-card-title'>{emoji} {row['name']}{photo_icon}{timer_icon}</div>
+                <div class='model-card-meta'>
+                    <span style='color:{status_color};font-weight:600'>{row['status']}</span>
+                    &nbsp;·&nbsp; ⏱ {time_str} &nbsp;·&nbsp; {row['model_id']} &nbsp;·&nbsp; {row['category'] or '—'} &nbsp;·&nbsp; {diff_str}
+                </div>
+            </div>""", unsafe_allow_html=True)
+            if st.button("Open →", key=f"btn_{row['model_id']}", use_container_width=True):
+                st.session_state.selected_model = row['model_id']
+                st.session_state.page = 'workbench'
+                st.rerun()
 
 # ─────────────────────────────────────────────
 # STATS PAGE
@@ -666,12 +761,24 @@ elif st.session_state.page == 'stats':
         avg_session_mins = round((real_logs['duration'].mean() or 0) / 60, 1) if not real_logs.empty else 0
         total_sessions   = len(real_logs)
         est_count        = len(all_logs) - len(real_logs)
+        total_photos     = pd.read_sql_query("SELECT COUNT(*) as n FROM Photos", conn)['n'].iloc[0] or 0
+        n_in_progress    = len(all_models[all_models['status'] == 'In Progress'])
 
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("🔩 Total Sheets Punched", f"{int(total_sheets or 0)}")
-        s2.metric("⏱️ Total Hours Built",    f"{round(total_build_secs/3600, 1)}")
-        s3.metric("📋 Total Sessions",        total_sessions)
-        s4.metric("⏰ Avg Session Length",    f"{avg_session_mins} min")
+        # Compact wrapping stat chips (3-up on phones) instead of stacked tiles
+        chips = [
+            (f"{round(total_build_secs/3600, 1)}h", "Hours Built"),
+            (total_sessions,                        "Sessions"),
+            (f"{avg_session_mins}m",                "Avg Session"),
+            (len(all_models),                       "Kits Owned"),
+            (n_in_progress,                         "Building"),
+            (f"{int(total_sheets or 0)}",           "Sheets"),
+            (total_photos,                          "Photos"),
+        ]
+        chips_html = "".join(
+            f"<div class='stat-chip'><div class='stat-chip-value'>{v}</div>"
+            f"<div class='stat-chip-label'>{l}</div></div>"
+            for v, l in chips)
+        st.markdown(f"<div class='stat-chips'>{chips_html}</div>", unsafe_allow_html=True)
         if est_count:
             st.caption(f"⚠️ {est_count} estimated/backfilled log{'s' if est_count != 1 else ''} "
                        f"included in total hours but excluded from session count, average, and the heatmap.")
@@ -691,28 +798,28 @@ elif st.session_state.page == 'stats':
                 <div style='margin-bottom:8px'>
                     <div style='display:flex;justify-content:space-between;margin-bottom:3px'>
                         <span style='color:#e0e0e0;font-size:0.85rem'>{r['category']}</span>
-                        <span style='color:#c8a84b;font-size:0.85rem'>{r['count']}</span>
+                        <span style='color:var(--accent);font-size:0.85rem'>{r['count']}</span>
                     </div>
-                    <div style='background:#2a2a2a;border-radius:4px;height:6px'>
-                        <div style='background:#c8a84b;width:{pct}%;height:6px;border-radius:4px'></div>
+                    <div style='background:var(--border);border-radius:4px;height:6px'>
+                        <div style='background:var(--accent);width:{pct}%;height:6px;border-radius:4px'></div>
                     </div>
                 </div>""", unsafe_allow_html=True)
 
         with col_right:
             st.markdown("#### 📈 By Status")
             status_counts = all_models.groupby('status').size().reset_index(name='count')
-            status_colors = {'Completed': '#4caf50', 'In Progress': '#f0a500',
+            status_colors = {'Completed': 'var(--done)', 'In Progress': 'var(--amber)',
                              'Not Started': '#555',  'On Hold': '#888'}
             for _, r in status_counts.iterrows():
                 pct   = int(r['count'] / len(all_models) * 100)
-                color = status_colors.get(r['status'], '#c8a84b')
+                color = status_colors.get(r['status'], 'var(--accent)')
                 st.markdown(f"""
                 <div style='margin-bottom:8px'>
                     <div style='display:flex;justify-content:space-between;margin-bottom:3px'>
                         <span style='color:#e0e0e0;font-size:0.85rem'>{r['status']}</span>
                         <span style='font-size:0.85rem;color:{color}'>{r['count']} ({pct}%)</span>
                     </div>
-                    <div style='background:#2a2a2a;border-radius:4px;height:6px'>
+                    <div style='background:var(--border);border-radius:4px;height:6px'>
                         <div style='background:{color};width:{pct}%;height:6px;border-radius:4px'></div>
                     </div>
                 </div>""", unsafe_allow_html=True)
@@ -751,16 +858,16 @@ elif st.session_state.page == 'stats':
                     for _, day_row in week.iterrows():
                         intensity = day_row['seconds'] / max_secs
                         if intensity == 0:
-                            color = "#1c1c1c"
+                            color = "var(--surface)"
                         elif intensity < 0.3:
-                            color = "#5a3e00"
+                            color = "#2e4d2e"
                         elif intensity < 0.6:
-                            color = "#9a6a00"
+                            color = "#4a7a4a"
                         else:
-                            color = "#c8a84b"
+                            color = "var(--accent)"
                         mins  = int(day_row['seconds'] // 60)
                         title = f"{day_row['date']}: {mins}min"
-                        week_html += f"<div title='{title}' style='width:14px;height:14px;background:{color};border-radius:3px;border:1px solid #2a2a2a'></div>"
+                        week_html += f"<div title='{title}' style='width:14px;height:14px;background:{color};border-radius:3px;border:1px solid var(--border)'></div>"
                     week_html += "</div>"
                 week_html += "</div>"
                 week_html += "<div style='color:#555;font-size:0.7rem;margin-top:6px'>Last 12 weeks — hover for details</div>"
@@ -779,10 +886,10 @@ elif st.session_state.page == 'stats':
                 emoji = STATUS_EMOJI.get(r['status'], '⬜')
                 st.markdown(f"""
                 <div style='display:flex;justify-content:space-between;padding:8px 12px;
-                            background:#1c1c1c;border-radius:6px;margin-bottom:6px;
-                            border:1px solid #2a2a2a'>
+                            background:var(--surface);border-radius:6px;margin-bottom:6px;
+                            border:1px solid var(--border)'>
                     <span style='color:#e0e0e0'>{emoji} {r['name']}</span>
-                    <span style='color:#c8a84b;font-weight:700'>{fmt_seconds(r['duration'])}</span>
+                    <span style='color:var(--accent);font-weight:700'>{fmt_seconds(r['duration'])}</span>
                 </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
@@ -874,22 +981,28 @@ elif st.session_state.page == 'workbench':
         st.session_state.page = 'inventory'
         st.rerun()
 
-    if st.button("⬅️ Back to Collection"):
-        st.session_state.page = 'inventory'
-        st.session_state.selected_model = None
-        st.rerun()
+    # Remember where we are so the app reopens right here next time
+    set_app_state('last_opened_model', model_id)
 
-    st.markdown(f"<h2>🔧 {model['name']}</h2>", unsafe_allow_html=True)
+    # Compact one-row header: back button + name, then a single info line
+    with st.container(key="nowrap_backrow"):
+        bc1, bc2 = st.columns([1, 6])
+        with bc1:
+            if st.button("⬅️", help="Back to collection"):
+                st.session_state.page = 'inventory'
+                st.session_state.selected_model = None
+                st.rerun()
+        with bc2:
+            st.markdown(f"<h2 style='margin:0'>🔧 {model['name']}</h2>", unsafe_allow_html=True)
 
-    inf1, inf2, inf3, inf4 = st.columns(4)
-    inf1.metric("Model ID",   model['model_id'])
-    inf2.metric("Category",   model['category'] or '—')
-    inf3.metric("Difficulty", model['difficulty'] or '—')
-    inf4.metric("Sheets",     model['sheets'] if pd.notna(model.get('sheets')) else '—')
+    sheets_str = f"{model['sheets']} sheet{'s' if model['sheets'] != 1 else ''}" if pd.notna(model.get('sheets')) else '— sheets'
+    st.markdown(
+        f"<div class='stats-line'>{model['model_id']} &nbsp;·&nbsp; {model['category'] or '—'} "
+        f"&nbsp;·&nbsp; {model['difficulty'] or '—'} &nbsp;·&nbsp; {sheets_str}</div>",
+        unsafe_allow_html=True)
 
-    st.divider()
-
-    tab_timer, tab_details, tab_photos = st.tabs(["⏱️ Build Timer", "📋 Details", "📸 Progress Photos"])
+    tab_timer, tab_journal, tab_details, tab_photos = st.tabs(
+        ["⏱️ Timer", "📖 Journal", "📋 Details", "📸 Photos"])
 
     # ── TAB: TIMER (first tab — center stage) ──────────────────
     with tab_timer:
@@ -898,6 +1011,49 @@ elif st.session_state.page == 'workbench':
         # Check for active timer
         active = get_active_timer()
         is_active = active and active[0] == model_id
+
+        # Post-session recap: the session is already saved (nothing can be
+        # lost) — this just offers a note + photo while it's fresh.
+        recap = st.session_state.get('recap')
+        if recap and recap.get('model_id') == model_id and not is_active:
+            st.success(f"✅ Logged {fmt_seconds(recap['duration'])} — add a note & photo while it's fresh?")
+            recap_note = st.text_input("What did you work on?", key="recap_note",
+                                       placeholder="e.g. Finished the wings")
+            recap_cam  = st.camera_input("📷 Snap a progress photo (optional)", key="recap_cam")
+            recap_up   = None
+            if recap_cam is None:
+                recap_up = st.file_uploader("…or choose a photo", type=["jpg", "jpeg", "png", "webp"],
+                                            key="recap_upload")
+            with st.container(key="nowrap_recap"):
+                rb1, rb2 = st.columns(2)
+                do_save = rb1.button("💾 Save recap", type="primary", use_container_width=True)
+                do_skip = rb2.button("Skip", use_container_width=True)
+            if do_save:
+                if recap_note:
+                    c.execute("UPDATE Build_Logs SET notes=? WHERE log_id=?",
+                              (recap_note, recap['log_id']))
+                photo = recap_cam or recap_up
+                photo_err = None
+                if photo is not None:
+                    with st.spinner("Uploading photo..."):
+                        ext = "jpg"
+                        if getattr(photo, "name", None) and "." in photo.name:
+                            ext = photo.name.rsplit(".", 1)[-1].lower()
+                        filename = f"{model_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+                        url, photo_err = upload_to_github(photo.getvalue(), filename)
+                    if url:
+                        c.execute(
+                            "INSERT INTO Photos (model_id, url, caption, uploaded_at) VALUES (?,?,?,?)",
+                            (model_id, url, recap_note, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                if photo_err:
+                    st.error(f"Photo upload failed: {photo_err} — note not saved yet, try again.")
+                elif save_and_report("Session saved!"):
+                    del st.session_state['recap']
+                    st.rerun()
+            if do_skip:
+                del st.session_state['recap']
+                st.rerun()
+            st.divider()
 
         if is_active:
             timer_start_dt = datetime.fromisoformat(active[1])
@@ -921,24 +1077,26 @@ elif st.session_state.page == 'workbench':
                 </div>""", unsafe_allow_html=True)
             _live_stopwatch()
 
-            session_note = st.text_input("Session note (optional)", key="session_note_active")
-            stop_col, _ = st.columns([1, 2])
-            with stop_col:
-                if st.button("⏹️ Stop & Save Session", type="primary", use_container_width=True):
-                    duration = (datetime.now() - timer_start_dt).total_seconds()
-                    c.execute(
-                        "INSERT INTO Build_Logs (model_id, start_time, duration, notes) VALUES (?,?,?,?)",
-                        (model_id, active[1], duration, session_note))
-                    c.execute(
-                        "UPDATE Models SET last_worked=?, status=? WHERE model_id=?",
-                        (str(datetime.now().date()),
-                         'In Progress' if model['status'] == 'Not Started' else model['status'],
-                         model_id))
-                    c.execute("DELETE FROM Active_Timer")
-                    # Single commit+push for the whole session so a failed sync
-                    # is reported instead of silently dropping the logged time.
-                    if save_and_report(f"✅ Logged {fmt_seconds(duration)}!"):
-                        st.rerun()
+            if st.button("⏹️ Stop & Save Session", type="primary", use_container_width=True):
+                duration = (datetime.now() - timer_start_dt).total_seconds()
+                # Save the session immediately — the note/photo recap that
+                # follows is optional, so nothing is lost if it's abandoned.
+                c.execute(
+                    "INSERT INTO Build_Logs (model_id, start_time, duration, notes) VALUES (?,?,?,?)",
+                    (model_id, active[1], duration, ""))
+                log_id = c.lastrowid
+                c.execute(
+                    "UPDATE Models SET last_worked=?, status=? WHERE model_id=?",
+                    (str(datetime.now().date()),
+                     'In Progress' if model['status'] == 'Not Started' else model['status'],
+                     model_id))
+                c.execute("DELETE FROM Active_Timer")
+                st.session_state['recap'] = {
+                    'model_id': model_id, 'log_id': log_id, 'duration': duration}
+                # Single commit+push for the whole session so a failed sync
+                # is reported instead of silently dropping the logged time.
+                if save_and_report(None):
+                    st.rerun()
 
         else:
             # Show total time and start button
@@ -960,11 +1118,9 @@ elif st.session_state.page == 'workbench':
                     set_active_timer(model_id, datetime.now().isoformat())
                     st.rerun()
             else:
-                start_col, _ = st.columns([1, 2])
-                with start_col:
-                    if st.button("▶️ Start Build Session", type="primary", use_container_width=True):
-                        set_active_timer(model_id, datetime.now().isoformat())
-                        st.rerun()
+                if st.button("▶️ Start Build Session", type="primary", use_container_width=True):
+                    set_active_timer(model_id, datetime.now().isoformat())
+                    st.rerun()
 
         st.divider()
         st.markdown("**Or log time manually:**")
@@ -996,7 +1152,7 @@ elif st.session_state.page == 'workbench':
 
                 if editing:
                     st.markdown(
-                        "<div style='background:#1c1c1c;border:1px solid #c8a84b;"
+                        "<div style='background:var(--surface);border:1px solid var(--accent);"
                         "border-radius:8px;padding:12px;margin-bottom:8px'>",
                         unsafe_allow_html=True)
                     ec1, ec2 = st.columns([1, 2])
@@ -1028,23 +1184,71 @@ elif st.session_state.page == 'workbench':
                     st.markdown("</div>", unsafe_allow_html=True)
                 else:
                     is_est = bool(log['is_estimate']) if 'is_estimate' in log and pd.notna(log['is_estimate']) else False
-                    rc1, rc2, rc3, rc4, rc5 = st.columns([2, 1.2, 3, 0.6, 0.6])
-                    rc1.markdown(f"<span style='color:#888;font-size:0.85rem'>{log['start_time']}</span>",
-                                 unsafe_allow_html=True)
-                    est_badge = " <span style='background:#3a2a00;color:#c8a84b;font-size:0.6rem;padding:1px 5px;border-radius:4px;letter-spacing:1px'>EST</span>" if is_est else ""
-                    rc2.markdown(f"<span style='color:#c8a84b;font-weight:600'>{fmt_seconds(log['duration'])}</span>{est_badge}",
-                                 unsafe_allow_html=True)
-                    rc3.markdown(f"<span style='color:#e0e0e0;font-size:0.85rem'>{log['notes'] or '—'}</span>",
-                                 unsafe_allow_html=True)
-                    with rc4:
-                        if st.button("✏️", key=f"edit_btn_{lid}", help="Edit this session"):
-                            st.session_state[f"editing_log_{lid}"] = True
-                            st.rerun()
-                    with rc5:
-                        if st.button("🗑️", key=f"del_log_{lid}", help="Delete this session"):
-                            c.execute("DELETE FROM Build_Logs WHERE log_id=?", (lid,))
-                            if save_and_report(None):
+                    est_badge = " <span style='background:#243024;color:var(--accent);font-size:0.6rem;padding:1px 5px;border-radius:4px;letter-spacing:1px'>EST</span>" if is_est else ""
+                    # One row per session on phones: text block + two icon buttons
+                    log_note_html = f"<br><span style='color:#e0e0e0'>{log['notes']}</span>" if log['notes'] else ""
+                    with st.container(key=f"nowrap_logrow_{lid}"):
+                        rc1, rc2, rc3 = st.columns([8, 1, 1])
+                        rc1.markdown(
+                            f"<div style='font-size:0.85rem;line-height:1.5'>"
+                            f"<span style='color:var(--accent);font-weight:600'>{fmt_seconds(log['duration'])}</span>{est_badge}"
+                            f" <span style='color:#888'>· {log['start_time']}</span>"
+                            f"{log_note_html}"
+                            f"</div>",
+                            unsafe_allow_html=True)
+                        with rc2:
+                            if st.button("✏️", key=f"edit_btn_{lid}", help="Edit this session"):
+                                st.session_state[f"editing_log_{lid}"] = True
                                 st.rerun()
+                        with rc3:
+                            if st.button("🗑️", key=f"del_log_{lid}", help="Delete this session"):
+                                c.execute("DELETE FROM Build_Logs WHERE log_id=?", (lid,))
+                                if save_and_report(None):
+                                    st.rerun()
+
+    # ── TAB: JOURNAL — the build's story, newest first ──────────
+    with tab_journal:
+        j_logs   = get_logs(model_id)
+        j_photos = get_photos(model_id)
+
+        entries = []
+        for _, log in j_logs.iterrows():
+            ts = pd.to_datetime(log['start_time'], format='mixed', errors='coerce')
+            entries.append({'ts': ts, 'kind': 'session',
+                            'duration': log['duration'], 'note': log['notes'],
+                            'is_est': bool(log['is_estimate']) if pd.notna(log.get('is_estimate')) else False})
+        for _, photo in j_photos.iterrows():
+            ts = pd.to_datetime(photo['uploaded_at'], format='mixed', errors='coerce')
+            entries.append({'ts': ts, 'kind': 'photo',
+                            'url': photo['url'], 'caption': photo['caption']})
+
+        if not entries:
+            st.info("Nothing here yet — log a session or add a photo and the story builds itself.")
+        else:
+            # Newest first; undated entries sink to the bottom
+            entries.sort(key=lambda e: pd.Timestamp.min if pd.isna(e['ts']) else e['ts'], reverse=True)
+            total_secs = total_time_seconds(model_id)
+            total_str  = fmt_seconds(total_secs) if total_secs else "0m"
+            st.markdown(
+                f"<div class='stats-line'>{len(j_logs)} session{'s' if len(j_logs) != 1 else ''} · "
+                f"{len(j_photos)} photo{'s' if len(j_photos) != 1 else ''} · ⏱ {total_str} total</div>",
+                unsafe_allow_html=True)
+            for e in entries:
+                date_str = e['ts'].strftime('%b %d, %Y · %H:%M') if not pd.isna(e['ts']) else 'Undated'
+                if e['kind'] == 'session':
+                    est_tag = " (estimate)" if e['is_est'] else ""
+                    note_html = f"<div class='journal-body'>{e['note']}</div>" if e['note'] else ""
+                    st.markdown(f"""
+                    <div class='journal-entry'>
+                        <div class='journal-date'>⏱ {date_str} — {fmt_seconds(e['duration'])}{est_tag}</div>
+                        {note_html}
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div class='journal-entry'><div class='journal-date'>📸 {date_str}</div></div>",
+                                unsafe_allow_html=True)
+                    st.image(e['url'], use_container_width=True)
+                    if e['caption']:
+                        st.caption(e['caption'])
 
     # ── TAB: DETAILS ───────────────────────────────
     with tab_details:
