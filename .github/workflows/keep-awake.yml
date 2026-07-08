@@ -30,34 +30,57 @@ jobs:
       - name: Visit app in a real browser
         run: |
           cat > visit.py <<'EOF'
-          import sys, time
+          import re, sys, time
           from playwright.sync_api import sync_playwright
 
           URL = "https://metal-earth-tracker.streamlit.app/"
+
+          def dump(page, label):
+              print(f"--- {label} ---")
+              print("url:  ", page.url)
+              print("title:", page.title())
+              for f in page.frames:
+                  print("frame:", f.url[:120])
+              try:
+                  body = re.sub(r"\s+", " ", page.locator("body").inner_text())[:400]
+                  print("body: ", body)
+              except Exception as e:
+                  print("body read failed:", e)
 
           with sync_playwright() as p:
               browser = p.chromium.launch()
               page = browser.new_page()
               page.goto(URL, wait_until="domcontentloaded", timeout=60_000)
-              page.wait_for_timeout(5_000)
+              page.wait_for_timeout(8_000)
+              dump(page, "after load")
 
-              # If the app fell asleep, click the wake-up button
-              wake = page.get_by_text("get this app back up")
-              if wake.count():
-                  print("App was asleep — clicking wake-up button...")
-                  wake.first.click()
+              # If the app fell asleep, click the wake-up button (search every
+              # frame — the platform shell sometimes wraps content).
+              for frame in page.frames:
+                  wake = frame.get_by_text(re.compile("get this app back up|wake", re.I))
+                  if wake.count():
+                      print("App was asleep — clicking wake-up button...")
+                      wake.first.click()
+                      break
 
               # Wait for the app to render; the open websocket session is
-              # what counts as real viewer traffic.
+              # what counts as real viewer traffic. Accept either the app's
+              # own text or Streamlit's root container, in any frame.
               deadline = time.time() + 240
               while time.time() < deadline:
-                  if page.get_by_text("Metal Earth").count():
-                      print("App is up and rendering.")
-                      page.wait_for_timeout(15_000)  # hold the session open
-                      browser.close()
-                      sys.exit(0)
+                  for frame in page.frames:
+                      try:
+                          if (frame.get_by_text("Metal Earth").count()
+                                  or frame.locator('[data-testid="stAppViewContainer"]').count()):
+                              print("App is up and rendering.")
+                              page.wait_for_timeout(15_000)  # hold the session open
+                              browser.close()
+                              sys.exit(0)
+                      except Exception:
+                          pass
                   page.wait_for_timeout(5_000)
 
+              dump(page, "after timeout")
               print("ERROR: app did not render within 4 minutes.")
               sys.exit(1)
           EOF
