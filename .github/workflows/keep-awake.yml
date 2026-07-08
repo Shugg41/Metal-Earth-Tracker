@@ -1,10 +1,15 @@
-# Pings the Streamlit app every 2 hours so Community Cloud never puts it to
-# sleep (apps sleep after ~12h without traffic, and waking takes 1-2 minutes).
+# Visits the Streamlit app every 2 hours with a real headless browser so
+# Community Cloud never puts it to sleep (apps sleep after ~12h without
+# viewer traffic, and cold wakes take 1-2 minutes).
 #
-# Note: GitHub disables scheduled workflows after 60 days of no repo activity.
-# This app commits to the repo on every save, so the schedule stays alive
-# naturally. If the app ever goes quiet for two months, re-enable it from the
-# Actions tab.
+# A real browser is required: plain curl gets stuck in Streamlit Cloud's
+# redirect loop and doesn't register as viewer traffic (no websocket).
+# The browser session also clicks the "get this app back up" button if the
+# app somehow fell asleep anyway — so this both prevents AND undoes sleep.
+#
+# Note: GitHub disables scheduled workflows after 60 days of no repo
+# activity. This app commits to the repo on every save, so the schedule
+# stays alive naturally.
 name: Keep app awake
 
 on:
@@ -15,11 +20,45 @@ on:
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Ping app
+      - name: Install Playwright
         run: |
-          curl --silent --show-error --fail --location \
-               --max-time 120 --retry 3 --retry-delay 10 \
-               --output /dev/null \
-               https://metal-earth-tracker.streamlit.app/
-          echo "App responded — still awake."
+          pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Visit app in a real browser
+        run: |
+          cat > visit.py <<'EOF'
+          import sys, time
+          from playwright.sync_api import sync_playwright
+
+          URL = "https://metal-earth-tracker.streamlit.app/"
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              page.goto(URL, wait_until="domcontentloaded", timeout=60_000)
+              page.wait_for_timeout(5_000)
+
+              # If the app fell asleep, click the wake-up button
+              wake = page.get_by_text("get this app back up")
+              if wake.count():
+                  print("App was asleep — clicking wake-up button...")
+                  wake.first.click()
+
+              # Wait for the app to render; the open websocket session is
+              # what counts as real viewer traffic.
+              deadline = time.time() + 240
+              while time.time() < deadline:
+                  if page.get_by_text("Metal Earth").count():
+                      print("App is up and rendering.")
+                      page.wait_for_timeout(15_000)  # hold the session open
+                      browser.close()
+                      sys.exit(0)
+                  page.wait_for_timeout(5_000)
+
+              print("ERROR: app did not render within 4 minutes.")
+              sys.exit(1)
+          EOF
+          python visit.py
