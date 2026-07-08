@@ -280,12 +280,17 @@ def upload_to_github(image_bytes, filename):
         return None, str(e)
 
 # ─────────────────────────────────────────────
-# STARTUP — pull DB from GitHub
+# STARTUP — pull DB from GitHub once per SERVER boot, not per browser visit.
+# This server is the only writer, so once it has the DB its local copy is
+# always at least as new as GitHub's — re-pulling on every open just made
+# each visit slower (and could clobber local changes whose push had failed).
 # ─────────────────────────────────────────────
-if 'db_loaded' not in st.session_state:
-    with st.spinner("Loading your workshop..."):
-        pull_db_from_github()
-    st.session_state.db_loaded = True
+@st.cache_resource(show_spinner="Loading your workshop...")
+def _startup_pull():
+    pull_db_from_github()
+    return True
+
+_startup_pull()
 
 # ─────────────────────────────────────────────
 # DATABASE SETUP
@@ -631,10 +636,17 @@ if st.session_state.page == 'inventory':
 
     # ── Currently Building banner (full-width, phone-friendly) ──
     in_progress_models = all_models[all_models['status'] == 'In Progress'] if not all_models.empty else pd.DataFrame()
+    # Two GROUP BY queries replace the per-card get_photos/get_logs lookups
+    # (previously 2+ queries per model on every rerun).
+    time_by_model = dict(c.execute(
+        "SELECT model_id, SUM(duration) FROM Build_Logs GROUP BY model_id").fetchall())
+    photos_by_model = dict(c.execute(
+        "SELECT model_id, COUNT(*) FROM Photos GROUP BY model_id").fetchall())
+
     if not in_progress_models.empty:
         st.markdown("<div style='color:var(--accent);font-size:0.7rem;text-transform:uppercase;letter-spacing:2px;margin-bottom:8px'>🔧 Currently Building</div>", unsafe_allow_html=True)
         for _, brow in in_progress_models.head(3).iterrows():
-            secs = total_time_seconds(brow['model_id'])
+            secs = time_by_model.get(brow['model_id']) or 0
             # Add live timer if this model is active
             if active_timer and active_timer[0] == brow['model_id']:
                 timer_start_dt = datetime.fromisoformat(active_timer[1])
@@ -708,9 +720,8 @@ if st.session_state.page == 'inventory':
         for _, row in display_df.iterrows():
             emoji      = STATUS_EMOJI.get(row['status'], '⬜')
             diff_str   = row['difficulty'] if row['difficulty'] else '—'
-            photos     = get_photos(row['model_id'])
-            photo_icon = " 📸" if not photos.empty else ""
-            secs       = total_time_seconds(row['model_id'])
+            photo_icon = " 📸" if photos_by_model.get(row['model_id']) else ""
+            secs       = time_by_model.get(row['model_id']) or 0
             time_str   = fmt_seconds(secs) if secs > 0 else "—"
 
             # Is this the active timer model?
