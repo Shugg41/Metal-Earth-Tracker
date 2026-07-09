@@ -333,9 +333,18 @@ c.execute('''CREATE TABLE IF NOT EXISTS Photos
 
 # Active timer table — persists across browser sessions
 c.execute('''CREATE TABLE IF NOT EXISTS Active_Timer
-             (id         INTEGER PRIMARY KEY,
-              model_id   TEXT,
-              start_time TEXT)''')
+             (id          INTEGER PRIMARY KEY,
+              model_id    TEXT,
+              start_time  TEXT,
+              paused_at   TEXT,
+              paused_secs REAL DEFAULT 0)''')
+
+# Migration: add pause columns to pre-existing DBs
+_timer_cols = [row[1] for row in c.execute("PRAGMA table_info(Active_Timer)").fetchall()]
+if 'paused_at' not in _timer_cols:
+    c.execute("ALTER TABLE Active_Timer ADD COLUMN paused_at TEXT")
+    c.execute("ALTER TABLE Active_Timer ADD COLUMN paused_secs REAL DEFAULT 0")
+    conn.commit()
 
 # Small key-value store for app state (e.g. last opened model)
 c.execute('''CREATE TABLE IF NOT EXISTS App_State
@@ -487,8 +496,19 @@ def total_time_seconds(model_id):
     return logs['duration'].sum() if not logs.empty else 0
 
 def get_active_timer():
-    row = c.execute("SELECT model_id, start_time FROM Active_Timer WHERE id=1").fetchone()
+    row = c.execute(
+        "SELECT model_id, start_time, paused_at, paused_secs FROM Active_Timer WHERE id=1").fetchone()
     return row if row else None
+
+def timer_elapsed_seconds(t):
+    """Active (non-paused) seconds for an Active_Timer row
+    (model_id, start_time, paused_at, paused_secs). While paused, the clock
+    is frozen at the moment the pause began."""
+    end = datetime.fromisoformat(t[2]) if t[2] else datetime.now()
+    return max(0.0, (end - datetime.fromisoformat(t[1])).total_seconds() - (t[3] or 0))
+
+def timer_is_paused(t):
+    return bool(t and t[2])
 
 def set_active_timer(model_id, start_time_str):
     c.execute("DELETE FROM Active_Timer")
@@ -498,6 +518,26 @@ def set_active_timer(model_id, start_time_str):
     if not ok:
         st.session_state['unsynced'] = True
     return ok
+
+def pause_active_timer():
+    c.execute("UPDATE Active_Timer SET paused_at=? WHERE id=1 AND paused_at IS NULL",
+              (datetime.now().isoformat(),))
+    ok = save()
+    if not ok:
+        st.session_state['unsynced'] = True
+    return ok
+
+def resume_active_timer():
+    t = get_active_timer()
+    if t and t[2]:
+        pause_len = (datetime.now() - datetime.fromisoformat(t[2])).total_seconds()
+        c.execute("UPDATE Active_Timer SET paused_at=NULL, paused_secs=? WHERE id=1",
+                  ((t[3] or 0) + pause_len,))
+        ok = save()
+        if not ok:
+            st.session_state['unsynced'] = True
+        return ok
+    return True
 
 def clear_active_timer():
     c.execute("DELETE FROM Active_Timer")
@@ -527,6 +567,26 @@ def fmt_seconds(secs):
     if h:
         return f"{h}h {m:02d}m {s:02d}s"
     return f"{m:02d}m {s:02d}s"
+
+# ── Auto-stop sessions paused too long ──
+# Runs on every script execution (including the keep-awake pinger's visits
+# every 2 hours), so a forgotten pause gets finalized even if the app is
+# never opened. The session's active time is preserved; the pause isn't.
+PAUSE_AUTO_STOP_MINS = 60
+_t = get_active_timer()
+if timer_is_paused(_t):
+    _paused_for = (datetime.now() - datetime.fromisoformat(_t[2])).total_seconds()
+    if _paused_for > PAUSE_AUTO_STOP_MINS * 60:
+        _dur = timer_elapsed_seconds(_t)
+        c.execute(
+            "INSERT INTO Build_Logs (model_id, start_time, duration, notes) VALUES (?,?,?,?)",
+            (_t[0], _t[1], _dur, "(auto-saved — paused over an hour)"))
+        c.execute("UPDATE Models SET last_worked=? WHERE model_id=?",
+                  (str(datetime.now().date()), _t[0]))
+        c.execute("DELETE FROM Active_Timer")
+        save()
+        st.toast(f"⏸️ Your paused session was auto-saved ({fmt_seconds(_dur)} of build time).")
+del _t
 
 # ─────────────────────────────────────────────
 # NAVIGATION STATE
@@ -566,9 +626,7 @@ total_secs_db = pd.read_sql_query("SELECT SUM(duration) as s FROM Build_Logs", c
 # Add active timer seconds if running
 active_timer = get_active_timer()
 if active_timer:
-    timer_start_dt = datetime.fromisoformat(active_timer[1])
-    live_elapsed   = (datetime.now() - timer_start_dt).total_seconds()
-    total_secs_db += live_elapsed
+    total_secs_db += timer_elapsed_seconds(active_timer)
 
 total_hours = round(total_secs_db / 3600, 1)
 completed   = len(all_models[all_models['status'] == 'Completed']) if not all_models.empty else 0
@@ -649,8 +707,7 @@ if st.session_state.page == 'inventory':
             secs = time_by_model.get(brow['model_id']) or 0
             # Add live timer if this model is active
             if active_timer and active_timer[0] == brow['model_id']:
-                timer_start_dt = datetime.fromisoformat(active_timer[1])
-                secs += (datetime.now() - timer_start_dt).total_seconds()
+                secs += timer_elapsed_seconds(active_timer)
             time_str = fmt_seconds(secs) if secs > 0 else "Not started"
             st.markdown(f"""
             <div class='building-banner'>
@@ -727,7 +784,7 @@ if st.session_state.page == 'inventory':
             # Is this the active timer model?
             timer_icon = ""
             if active_timer and active_timer[0] == row['model_id']:
-                timer_icon = " ⏱️"
+                timer_icon = " ⏸️" if timer_is_paused(active_timer) else " ⏱️"
 
             status_color = {
                 'In Progress': 'var(--amber)', 'Completed': 'var(--done)',
@@ -1067,29 +1124,51 @@ elif st.session_state.page == 'workbench':
             st.divider()
 
         if is_active:
-            timer_start_dt = datetime.fromisoformat(active[1])
+            paused = timer_is_paused(active)
 
-            # Live stopwatch. Streamlit strips <script> from markdown, so the old
-            # JS reload never actually ran. A fragment with run_every re-renders
-            # just this block once a second — a real ticking clock, no full reload.
-            # The *recorded* duration is still derived from the true start time at
-            # Stop, so the logged value is unaffected by how often we re-render.
-            @st.fragment(run_every=1)
-            def _live_stopwatch():
-                elapsed       = (datetime.now() - timer_start_dt).total_seconds()
+            def _stopwatch_html(elapsed, label):
                 total_display = secs_logged + elapsed
                 h, rem = divmod(int(elapsed), 3600)
                 m, s   = divmod(rem, 60)
-                st.markdown(f"""
+                return f"""
                 <div class='stopwatch'>
-                    <div class='stopwatch-label'>Session Time</div>
+                    <div class='stopwatch-label'>{label}</div>
                     <div class='stopwatch-time'>{h:02d}:{m:02d}:{s:02d}</div>
                     <div class='stopwatch-label' style='margin-top:12px'>Total on this kit: {fmt_seconds(total_display)}</div>
-                </div>""", unsafe_allow_html=True)
-            _live_stopwatch()
+                </div>"""
 
-            if st.button("⏹️ Stop & Save Session", type="primary", use_container_width=True):
-                duration = (datetime.now() - timer_start_dt).total_seconds()
+            if paused:
+                # Frozen clock — no ticking fragment while paused
+                st.markdown(_stopwatch_html(timer_elapsed_seconds(active), "⏸ PAUSED"),
+                            unsafe_allow_html=True)
+                st.caption(f"Paused sessions auto-save after {PAUSE_AUTO_STOP_MINS} minutes.")
+            else:
+                # Live stopwatch. A fragment with run_every re-renders just this
+                # block once a second — a real ticking clock, no full reload.
+                # The *recorded* duration still comes from timer_elapsed_seconds
+                # at Stop, so the logged value is exact regardless of rendering.
+                @st.fragment(run_every=1)
+                def _live_stopwatch():
+                    st.markdown(_stopwatch_html(timer_elapsed_seconds(active), "Session Time"),
+                                unsafe_allow_html=True)
+                _live_stopwatch()
+
+            with st.container(key="nowrap_timerbtns"):
+                tb1, tb2 = st.columns(2)
+                with tb1:
+                    if paused:
+                        if st.button("▶️ Resume", use_container_width=True):
+                            resume_active_timer()
+                            st.rerun()
+                    else:
+                        if st.button("⏸ Pause", use_container_width=True):
+                            pause_active_timer()
+                            st.rerun()
+                with tb2:
+                    stop_clicked = st.button("⏹️ Stop & Save", type="primary", use_container_width=True)
+
+            if stop_clicked:
+                duration = timer_elapsed_seconds(active)
                 # Save the session immediately — the note/photo recap that
                 # follows is optional, so nothing is lost if it's abandoned.
                 c.execute(
