@@ -261,16 +261,19 @@ def push_db_to_github():
     except Exception:
         return False
 
-def upload_to_github(image_bytes, filename):
+def upload_to_github(image_bytes, filename, folder="photos", message=None):
+    """Upload bytes to <folder>/<filename> in the repo. Used for progress
+    photos and for data backups — the container's disk is ephemeral, so
+    anything that must survive a restart has to land on GitHub."""
     try:
         repo = gh_repo()
         if not repo: return None, "GITHUB_REPO not set."
-        path    = f"photos/{filename}"
+        path    = f"{folder}/{filename}"
         api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
         check   = requests.get(api_url, headers=gh_headers(), timeout=10)
         sha     = check.json().get("sha") if check.status_code == 200 else None
         b64     = base64.b64encode(image_bytes).decode("utf-8")
-        payload = {"message": f"Add photo: {filename}", "content": b64}
+        payload = {"message": message or f"Add photo: {filename}", "content": b64}
         if sha: payload["sha"] = sha
         response = requests.put(api_url, headers=gh_headers(), json=payload, timeout=20)
         if response.status_code in (200, 201):
@@ -373,6 +376,49 @@ def save():
     is ephemeral and the only durable copy of the DB lives on GitHub."""
     conn.commit()
     return push_db_to_github()
+
+# ─────────────────────────────────────────────
+# ONE-TIME MIGRATION — difficulty text -> difficulty_num (box-gauge 1-10)
+# ─────────────────────────────────────────────
+# Difficulty is rated by counting tabs on the speedometer gauge on the back
+# of the box (1-10). Those numbers were being typed into the TEXT column
+# while difficulty_num — the column "Sort by Difficulty" sorts on — stayed
+# empty, which is why that sort did nothing.
+#
+# This migration is additive: it only fills empty difficulty_num values.
+# The only two rows whose existing values change are the two the user
+# supplied corrected numbers for (both had bogus values seeded from the
+# fabricated catalog CSV). A plain-text snapshot is written first.
+USER_DIFFICULTY_FIXES = {'MMS073': 7, 'MMS123': 2}
+
+if not get_app_state('difficulty_migrated'):
+    # Snapshot every kit before touching anything. This goes to GitHub, not
+    # just local disk — the container is ephemeral, so a local-only backup
+    # would be gone by the time anyone needed it.
+    _before = pd.read_sql_query("SELECT * FROM Models", conn)
+    if not _before.empty:
+        _stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        _name  = f"models_before_migration_{_stamp}.csv"
+        os.makedirs("backups", exist_ok=True)
+        _before.to_csv(f"backups/{_name}", index=False)
+        upload_to_github(_before.to_csv(index=False).encode("utf-8"), _name,
+                         folder="backups", message=f"Backup Models before difficulty migration")
+
+    for _mid, _txt, _num in c.execute(
+            "SELECT model_id, difficulty, difficulty_num FROM Models").fetchall():
+        if _mid in USER_DIFFICULTY_FIXES:
+            _v = USER_DIFFICULTY_FIXES[_mid]
+        elif _num is None and _txt and str(_txt).strip().isdigit():
+            _v = int(str(_txt).strip())
+        else:
+            continue  # leave untouched
+        c.execute("UPDATE Models SET difficulty_num=?, difficulty=? WHERE model_id=?",
+                  (_v, str(_v), _mid))
+
+    # Whitespace-only fix: 'Marvel ' was showing as its own filter entry
+    c.execute("UPDATE Models SET category = TRIM(category) WHERE category IS NOT NULL")
+    set_app_state('difficulty_migrated', '1')
+    save()
 
 # ─────────────────────────────────────────────
 # GOOGLE SHEETS SYNC (optional, via Apps Script webhook)
@@ -545,6 +591,48 @@ def clear_active_timer():
     if not ok:
         st.session_state['unsynced'] = True
     return ok
+
+def category_picker(current=None, key=""):
+    """Category selector that can never trap you: pick one you've used before,
+    or type a brand-new one in the box below (typing wins). Both widgets are
+    always visible because inside st.form a selectbox change doesn't rerun,
+    so a conditionally-revealed text box would never appear."""
+    cats = sorted({r[0].strip() for r in c.execute(
+        "SELECT DISTINCT category FROM Models "
+        "WHERE category IS NOT NULL AND TRIM(category) <> ''").fetchall()})
+    cur = (current or "").strip()
+    if cur and cur not in cats:
+        cats.append(cur)
+        cats.sort()
+    picked = ""
+    if cats:
+        picked = st.selectbox("Category", cats,
+                              index=cats.index(cur) if cur in cats else 0,
+                              key=f"cat_{key}")
+    typed = st.text_input("…or type a new category", key=f"newcat_{key}",
+                          placeholder="Leave blank to keep the choice above")
+    return (typed.strip() or picked).strip()
+
+def difficulty_input(current=None, key=""):
+    """Difficulty = number of tabs on the speedometer gauge on the back of
+    the box (1-10)."""
+    val = safe_int(current)
+    return st.number_input(
+        "Difficulty (tabs on box gauge)", min_value=1, max_value=10, step=1,
+        value=val if val and 1 <= val <= 10 else 5,
+        key=f"diff_{key}",
+        help="Count the tabs on the speedometer on the back of the box")
+
+def difficulty_display(row):
+    """Render difficulty as '7/10', preferring the numeric column."""
+    n = safe_int(row.get('difficulty_num') if hasattr(row, 'get') else None)
+    if n is None:
+        txt = row['difficulty'] if 'difficulty' in row and row['difficulty'] else None
+        if txt and str(txt).strip().isdigit():
+            n = int(str(txt).strip())
+        elif txt:
+            return str(txt)
+    return f"{n}/10" if n is not None else "—"
 
 def safe_int(val):
     try:
@@ -727,8 +815,8 @@ if st.session_state.page == 'inventory':
         with st.form("add_model", clear_on_submit=True):
             search_id  = st.text_input("Model ID (e.g. ME1054 or MMS073)").strip().upper()
             name_input = st.text_input("Name")
-            cat_input  = st.text_input("Category")
-            diff_input = st.text_input("Difficulty")
+            cat_input  = category_picker(key="add")
+            diff_val   = difficulty_input(key="add")
             sheets_val = st.number_input("Sheets", min_value=0.0, step=0.5, value=0.0)
 
             if st.form_submit_button("Add to Collection"):
@@ -746,8 +834,9 @@ if st.session_state.page == 'inventory':
                                (model_id, name, category, sheets, status,
                                 difficulty, difficulty_num, last_worked)
                                VALUES (?,?,?,?,?,?,?,?)""",
-                            (search_id, name_input, cat_input, sheets_val if sheets_val > 0 else None,
-                             'Not Started', diff_input, None,
+                            (search_id, name_input, cat_input,
+                             sheets_val if sheets_val > 0 else None,
+                             'Not Started', str(int(diff_val)), int(diff_val),
                              str(datetime.now().date())))
                         if save_and_report(f"Added {name_input}!"):
                             st.rerun()
@@ -776,7 +865,7 @@ if st.session_state.page == 'inventory':
         # Model cards — single-column compact list (phone-first)
         for _, row in display_df.iterrows():
             emoji      = STATUS_EMOJI.get(row['status'], '⬜')
-            diff_str   = row['difficulty'] if row['difficulty'] else '—'
+            diff_str   = difficulty_display(row)
             photo_icon = " 📸" if photos_by_model.get(row['model_id']) else ""
             secs       = time_by_model.get(row['model_id']) or 0
             time_str   = fmt_seconds(secs) if secs > 0 else "—"
@@ -1066,7 +1155,7 @@ elif st.session_state.page == 'workbench':
     sheets_str = f"{model['sheets']} sheet{'s' if model['sheets'] != 1 else ''}" if pd.notna(model.get('sheets')) else '— sheets'
     st.markdown(
         f"<div class='stats-line'>{model['model_id']} &nbsp;·&nbsp; {model['category'] or '—'} "
-        f"&nbsp;·&nbsp; {model['difficulty'] or '—'} &nbsp;·&nbsp; {sheets_str}</div>",
+        f"&nbsp;·&nbsp; {difficulty_display(model)} &nbsp;·&nbsp; {sheets_str}</div>",
         unsafe_allow_html=True)
 
     tab_timer, tab_journal, tab_details, tab_photos = st.tabs(
@@ -1345,13 +1434,26 @@ elif st.session_state.page == 'workbench':
         with st.form("edit_model"):
             new_status = st.selectbox("Status", STATUS_OPTIONS,
                 index=STATUS_OPTIONS.index(model['status']) if model['status'] in STATUS_OPTIONS else 0)
+            # Kit facts are editable here so a wrong entry never means
+            # re-adding the model — fix it in place.
+            new_cat    = category_picker(model['category'], key=f"edit_{model_id}")
+            new_diff   = difficulty_input(
+                model['difficulty_num'] if pd.notna(model.get('difficulty_num')) else model['difficulty'],
+                key=f"edit_{model_id}")
+            new_sheets = st.number_input(
+                "Sheets", min_value=0.0, step=0.5,
+                value=float(model['sheets']) if pd.notna(model.get('sheets')) else 0.0)
             new_rating = st.slider("My Rating (1–10)", 1, 10,
                 int(model['rating']) if model['rating'] else 1)
             new_notes  = st.text_area("Notes / Tips",
                 value=str(model['notes']) if model['notes'] else "")
             if st.form_submit_button("💾 Save Changes"):
-                c.execute("UPDATE Models SET status=?, rating=?, notes=? WHERE model_id=?",
-                          (new_status, new_rating, new_notes, model_id))
+                c.execute(
+                    """UPDATE Models SET status=?, category=?, difficulty=?, difficulty_num=?,
+                                         sheets=?, rating=?, notes=? WHERE model_id=?""",
+                    (new_status, new_cat, str(int(new_diff)), int(new_diff),
+                     new_sheets if new_sheets > 0 else None,
+                     new_rating, new_notes, model_id))
                 if save_and_report("Saved!"):
                     st.rerun()
 

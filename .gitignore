@@ -7,3 +7,6 @@ venv/
 
 # Streamlit secrets (never commit tokens)
 .streamlit/secrets.toml
+
+# Local runtime backups (the durable copies are pushed to GitHub via the API)
+backups/
