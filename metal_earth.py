@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import sqlite3
 import pandas as pd
 import requests
@@ -138,13 +139,32 @@ input, textarea, [data-baseweb="select"] {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 10px 14px;
+    padding: 10px 12px;
     margin-bottom: 6px;
     transition: border-color 0.2s, background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 .model-card:hover { border-color: var(--accent); background: var(--surface2); }
-.model-card-title { color: var(--text); font-size: 1rem; font-weight: 600; margin-bottom: 3px; }
+.model-card-body  { min-width: 0; flex: 1; }
+.model-card-title { color: var(--text); font-size: 1rem; font-weight: 600; margin-bottom: 3px;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-card-meta  { color: var(--muted); font-size: 0.78rem; }
+/* Newest progress photo as the card's thumbnail — makes the list feel like a shelf */
+.model-card-thumb {
+    width: 58px; height: 58px; flex: 0 0 58px;
+    border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--border); background: var(--surface2);
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem;
+}
+.model-card-thumb img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%; object-fit: cover;
+}
+.model-card-thumb-empty { opacity: 0.9; }
 
 /* ── Currently building banner ── */
 .building-banner {
@@ -199,6 +219,29 @@ input, textarea, [data-baseweb="select"] {
 .stat-chip-value { color: var(--accent); font-size: 1.15rem; font-weight: 700; }
 .stat-chip-label { color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; }
 
+/* ── Finished-kit celebration card ── */
+.finish-card {
+    background: linear-gradient(135deg, #101810, #1c2c1c);
+    border: 2px solid var(--accent);
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin: 10px 0;
+}
+.finish-title { color: var(--accent); font-size: 0.72rem; text-transform: uppercase;
+                letter-spacing: 2px; margin-bottom: 4px; }
+.finish-name  { color: #fff; font-size: 1.25rem; font-weight: 700; margin-bottom: 10px; }
+.finish-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 5px 0; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 0.85rem;
+}
+.finish-row b { color: var(--accent); font-size: 0.95rem; }
+.finish-strip { display: flex; gap: 6px; margin: 8px 0 4px; }
+.finish-strip img {
+    flex: 1 1 0; min-width: 0; height: 96px; object-fit: cover;
+    border-radius: 8px; border: 1px solid var(--border);
+}
+
 /* ── Journal timeline ── */
 .journal-entry {
     background: var(--surface);
@@ -216,18 +259,76 @@ input, textarea, [data-baseweb="select"] {
 
 /* ── Success/info/warning ── */
 [data-testid="stAlert"] { border-radius: 8px !important; }
+
+/* The PWA head-injector iframe renders nothing — keep it from taking space */
+iframe[title="streamlit_component_v1"][height="0"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+# INSTALL AS AN APP (PWA)
+# ─────────────────────────────────────────────
+# Streamlit renders into <body>, so the manifest/icon tags have to be pushed
+# into the real <head> from a component iframe (same origin, so window.parent
+# is reachable). With these present, iOS "Add to Home Screen" and Android
+# "Install app" give a fullscreen launcher with no browser chrome.
+components.html("""
+<script>
+(function () {
+  var TAGS = [
+    ['link', {rel: 'manifest', href: '/app/static/manifest.json'}, 'rel'],
+    ['link', {rel: 'apple-touch-icon', href: '/app/static/apple-touch-icon.png'}, 'rel'],
+    ['meta', {name: 'apple-mobile-web-app-capable', content: 'yes'}, 'name'],
+    ['meta', {name: 'mobile-web-app-capable', content: 'yes'}, 'name'],
+    ['meta', {name: 'apple-mobile-web-app-title', content: 'Workbench'}, 'name'],
+    ['meta', {name: 'apple-mobile-web-app-status-bar-style',
+              content: 'black-translucent'}, 'name'],
+    ['meta', {name: 'theme-color', content: '#0c0e0c'}, 'name']
+  ];
+  function inject() {
+    try {
+      var d = window.parent.document;
+      if (!d || !d.head) return false;
+      TAGS.forEach(function (t) {
+        var tag = t[0], attrs = t[1], key = t[2];
+        if (d.head.querySelector(tag + '[' + key + '="' + attrs[key] + '"]')) return;
+        var el = d.createElement(tag);
+        Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+        d.head.appendChild(el);
+      });
+      window.parent.__pwaTagsInjected = true;
+      return true;
+    } catch (e) { return false; }
+  }
+  // Retry briefly: the parent head isn't always ready on first parse, and
+  // Streamlit may still be mounting when this frame first runs.
+  if (!inject()) {
+    var n = 0;
+    var t = setInterval(function () {
+      if (inject() || ++n > 20) clearInterval(t);
+    }, 250);
+  }
+})();
+</script>
+""", height=0)
+
+# ─────────────────────────────────────────────
 # GITHUB HELPERS
 # ─────────────────────────────────────────────
+def secret(name, default=""):
+    """st.secrets raises if no secrets file exists at all (fresh clone, local
+    dev), so every read goes through here and degrades to the default."""
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
 def gh_headers():
-    token = st.secrets.get("GITHUB_TOKEN", "")
+    token = secret("GITHUB_TOKEN")
     return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
 
 def gh_repo():
-    return st.secrets.get("GITHUB_REPO", "")
+    return secret("GITHUB_REPO")
 
 def pull_db_from_github():
     try:
@@ -424,7 +525,7 @@ if not get_app_state('difficulty_migrated'):
 # GOOGLE SHEETS SYNC (optional, via Apps Script webhook)
 # ─────────────────────────────────────────────
 def gsheet_webhook():
-    return st.secrets.get("GSHEET_WEBHOOK_URL", "")
+    return secret("GSHEET_WEBHOOK_URL")
 
 def _tab_payload(df):
     """Serialize a DataFrame to {columns, rows} with JSON-native types
@@ -443,7 +544,7 @@ def sync_to_sheet():
         logs   = pd.read_sql_query("SELECT * FROM Build_Logs ORDER BY model_id, start_time", conn)
         photos = pd.read_sql_query("SELECT * FROM Photos ORDER BY model_id, uploaded_at", conn)
         payload = {
-            "secret": st.secrets.get("GSHEET_SECRET", ""),
+            "secret": secret("GSHEET_SECRET"),
             "tabs": {
                 "Models":     _tab_payload(models),
                 "Build Logs": _tab_payload(logs),
@@ -623,6 +724,14 @@ def difficulty_input(current=None, key=""):
         key=f"diff_{key}",
         help="Count the tabs on the speedometer on the back of the box")
 
+def rating_display(rating, prefix=" &nbsp;·&nbsp; "):
+    """Your 1-10 score for a finished kit. 0/None means unrated — show nothing
+    rather than implying a bad score."""
+    r = safe_int(rating)
+    if not r:
+        return ""
+    return f"{prefix}<span style='color:var(--khaki)'>★ {r}/10</span>"
+
 def difficulty_display(row):
     """Render difficulty as '7/10', preferring the numeric column."""
     n = safe_int(row.get('difficulty_num') if hasattr(row, 'get') else None)
@@ -786,8 +895,12 @@ if st.session_state.page == 'inventory':
     # (previously 2+ queries per model on every rerun).
     time_by_model = dict(c.execute(
         "SELECT model_id, SUM(duration) FROM Build_Logs GROUP BY model_id").fetchall())
-    photos_by_model = dict(c.execute(
-        "SELECT model_id, COUNT(*) FROM Photos GROUP BY model_id").fetchall())
+    # Count + newest photo per kit, so each card can show a thumbnail
+    photo_info = {r[0]: (r[1], r[2]) for r in c.execute("""
+        SELECT model_id, COUNT(*),
+               (SELECT url FROM Photos p2 WHERE p2.model_id = p1.model_id
+                ORDER BY uploaded_at DESC, photo_id DESC LIMIT 1)
+        FROM Photos p1 GROUP BY model_id""").fetchall()}
 
     if not in_progress_models.empty:
         st.markdown("<div style='color:var(--accent);font-size:0.7rem;text-transform:uppercase;letter-spacing:2px;margin-bottom:8px'>🔧 Currently Building</div>", unsafe_allow_html=True)
@@ -866,9 +979,10 @@ if st.session_state.page == 'inventory':
         for _, row in display_df.iterrows():
             emoji      = STATUS_EMOJI.get(row['status'], '⬜')
             diff_str   = difficulty_display(row)
-            photo_icon = " 📸" if photos_by_model.get(row['model_id']) else ""
+            n_photos, thumb_url = photo_info.get(row['model_id'], (0, None))
             secs       = time_by_model.get(row['model_id']) or 0
             time_str   = fmt_seconds(secs) if secs > 0 else "—"
+            rating_str = rating_display(row.get('rating'))
 
             # Is this the active timer model?
             timer_icon = ""
@@ -880,12 +994,27 @@ if st.session_state.page == 'inventory':
                 'Not Started': '#666',    'On Hold': '#888'
             }.get(row['status'], '#666')
 
+            # Newest photo becomes the card's thumbnail, layered over a status
+            # glyph — if the image 404s the img removes itself and the glyph
+            # shows through, instead of a broken-image icon.
+            img_html = (f"<img src='{thumb_url}' loading='lazy' alt='' "
+                        f"onerror='this.remove()'>" if thumb_url else "")
+            thumb = (f"<div class='model-card-thumb model-card-thumb-empty'>"
+                     f"{emoji}{img_html}</div>")
+            photo_badge = f" <span style='color:#667a66'>📸{n_photos}</span>" if n_photos else ""
+
             st.markdown(f"""
             <div class='model-card'>
-                <div class='model-card-title'>{emoji} {row['name']}{photo_icon}{timer_icon}</div>
-                <div class='model-card-meta'>
-                    <span style='color:{status_color};font-weight:600'>{row['status']}</span>
-                    &nbsp;·&nbsp; ⏱ {time_str} &nbsp;·&nbsp; {row['model_id']} &nbsp;·&nbsp; {row['category'] or '—'} &nbsp;·&nbsp; {diff_str}
+                {thumb}
+                <div class='model-card-body'>
+                    <div class='model-card-title'>{emoji} {row['name']}{timer_icon}</div>
+                    <div class='model-card-meta'>
+                        <span style='color:{status_color};font-weight:600'>{row['status']}</span>
+                        &nbsp;·&nbsp; ⏱ {time_str}{rating_str}{photo_badge}
+                    </div>
+                    <div class='model-card-meta' style='opacity:.75'>
+                        {row['model_id']} &nbsp;·&nbsp; {row['category'] or '—'} &nbsp;·&nbsp; {diff_str}
+                    </div>
                 </div>
             </div>""", unsafe_allow_html=True)
             if st.button("Open →", key=f"btn_{row['model_id']}", use_container_width=True):
@@ -1049,6 +1178,28 @@ elif st.session_state.page == 'stats':
                     <span style='color:var(--accent);font-weight:700'>{fmt_seconds(r['duration'])}</span>
                 </div>""", unsafe_allow_html=True)
 
+        # ── Best builds, by your own rating ──
+        rated = all_models[all_models['rating'].fillna(0) > 0].copy()
+        if not rated.empty:
+            st.divider()
+            st.markdown("#### ⭐ Best Builds")
+            st.caption("Your own 1–10 scores.")
+            rated = rated.sort_values('rating', ascending=False).head(8)
+            for _, r in rated.iterrows():
+                emoji = STATUS_EMOJI.get(r['status'], '⬜')
+                pct   = int(safe_int(r['rating']) * 10)
+                st.markdown(f"""
+                <div style='padding:8px 12px;background:var(--surface);border-radius:6px;
+                            margin-bottom:6px;border:1px solid var(--border)'>
+                    <div style='display:flex;justify-content:space-between'>
+                        <span style='color:#e0e0e0'>{emoji} {r['name']}</span>
+                        <span style='color:var(--khaki);font-weight:700'>★ {safe_int(r['rating'])}/10</span>
+                    </div>
+                    <div style='background:var(--surface2);border-radius:4px;height:5px;margin-top:5px'>
+                        <div style='background:var(--khaki);width:{pct}%;height:5px;border-radius:4px'></div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────
 # EXPORT PAGE — get a copy of your data that's yours
 # ─────────────────────────────────────────────
@@ -1155,8 +1306,42 @@ elif st.session_state.page == 'workbench':
     sheets_str = f"{model['sheets']} sheet{'s' if model['sheets'] != 1 else ''}" if pd.notna(model.get('sheets')) else '— sheets'
     st.markdown(
         f"<div class='stats-line'>{model['model_id']} &nbsp;·&nbsp; {model['category'] or '—'} "
-        f"&nbsp;·&nbsp; {difficulty_display(model)} &nbsp;·&nbsp; {sheets_str}</div>",
+        f"&nbsp;·&nbsp; {difficulty_display(model)} &nbsp;·&nbsp; {sheets_str}"
+        f"{rating_display(model['rating'])}</div>",
         unsafe_allow_html=True)
+
+    # ── Finished-kit celebration — the payoff for a completed build ──
+    if st.session_state.get('celebrate') == model_id:
+        st.balloons()
+        _logs   = get_logs(model_id)
+        _photos = get_photos(model_id)
+        _secs   = total_time_seconds(model_id)
+        _real   = _logs[_logs['is_estimate'].fillna(0) == 0] if not _logs.empty else _logs
+        _first  = pd.to_datetime(_logs['start_time'], format='mixed', errors='coerce').min() \
+                  if not _logs.empty else pd.NaT
+        _span   = "" if pd.isna(_first) else \
+                  f"<div class='finish-row'><span>Started</span><b>{_first.strftime('%b %d, %Y')}</b></div>"
+        st.markdown(f"""
+        <div class='finish-card'>
+            <div class='finish-title'>✅ Build Complete</div>
+            <div class='finish-name'>{model['name']}</div>
+            <div class='finish-row'><span>Total build time</span><b>{fmt_seconds(_secs)}</b></div>
+            <div class='finish-row'><span>Sessions</span><b>{len(_real)}</b></div>
+            <div class='finish-row'><span>Progress photos</span><b>{len(_photos)}</b></div>
+            {_span}
+            <div class='finish-row'><span>Your rating</span><b>★ {safe_int(model['rating']) or '—'}/10</b></div>
+        </div>""", unsafe_allow_html=True)
+        if not _photos.empty:
+            # Side-by-side strip rather than three full-width images, which
+            # would push the rest of the card off a phone screen.
+            _strip = "".join(
+                f"<img src='{_p['url']}' loading='lazy' alt='' onerror='this.remove()'>"
+                for _, _p in _photos.head(3).iterrows())
+            st.markdown(f"<div class='finish-strip'>{_strip}</div>", unsafe_allow_html=True)
+        if st.button("Nice — dismiss", type="primary", use_container_width=True):
+            del st.session_state['celebrate']
+            st.rerun()
+        st.divider()
 
     tab_timer, tab_journal, tab_details, tab_photos = st.tabs(
         ["⏱️ Timer", "📖 Journal", "📋 Details", "📸 Photos"])
@@ -1400,6 +1585,12 @@ elif st.session_state.page == 'workbench':
             ts = pd.to_datetime(photo['uploaded_at'], format='mixed', errors='coerce')
             entries.append({'ts': ts, 'kind': 'photo',
                             'url': photo['url'], 'caption': photo['caption']})
+        # Finishing the kit caps the story
+        if model['status'] == 'Completed':
+            entries.append({
+                'ts': pd.to_datetime(model['last_worked'], errors='coerce'),
+                'kind': 'done', 'rating': safe_int(model['rating']),
+                'total': total_time_seconds(model_id)})
 
         if not entries:
             st.info("Nothing here yet — log a session or add a photo and the story builds itself.")
@@ -1421,6 +1612,13 @@ elif st.session_state.page == 'workbench':
                     <div class='journal-entry'>
                         <div class='journal-date'>⏱ {date_str} — {fmt_seconds(e['duration'])}{est_tag}</div>
                         {note_html}
+                    </div>""", unsafe_allow_html=True)
+                elif e['kind'] == 'done':
+                    stars = f" · ★ {e['rating']}/10" if e['rating'] else ""
+                    st.markdown(f"""
+                    <div class='journal-entry' style='border-left-color:var(--accent)'>
+                        <div class='journal-date' style='color:var(--accent)'>✅ Completed — {date_str}</div>
+                        <div class='journal-body'>{fmt_seconds(e['total'])} of build time{stars}</div>
                     </div>""", unsafe_allow_html=True)
                 else:
                     st.markdown(f"<div class='journal-entry'><div class='journal-date'>📸 {date_str}</div></div>",
@@ -1448,13 +1646,22 @@ elif st.session_state.page == 'workbench':
             new_notes  = st.text_area("Notes / Tips",
                 value=str(model['notes']) if model['notes'] else "")
             if st.form_submit_button("💾 Save Changes"):
+                just_finished = (new_status == 'Completed' and model['status'] != 'Completed')
                 c.execute(
                     """UPDATE Models SET status=?, category=?, difficulty=?, difficulty_num=?,
                                          sheets=?, rating=?, notes=? WHERE model_id=?""",
                     (new_status, new_cat, str(int(new_diff)), int(new_diff),
                      new_sheets if new_sheets > 0 else None,
                      new_rating, new_notes, model_id))
-                if save_and_report("Saved!"):
+                if just_finished:
+                    c.execute("UPDATE Models SET last_worked=? WHERE model_id=?",
+                              (str(datetime.now().date()), model_id))
+                # Flag the celebration before saving: finishing a kit is a
+                # local fact, and a failed GitHub push shouldn't swallow the
+                # moment (the unsynced banner reports the push separately).
+                if just_finished:
+                    st.session_state['celebrate'] = model_id
+                if save_and_report(None if just_finished else "Saved!"):
                     st.rerun()
 
         if st.button("🗑️ Remove from Collection", type="secondary"):
