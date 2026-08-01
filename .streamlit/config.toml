@@ -4,3 +4,8 @@ primaryColor = "#7fae7a"
 backgroundColor = "#0c0e0c"
 secondaryBackgroundColor = "#151a15"
 textColor = "#e0e0e0"
+
+[server]
+# Serves files from static/ at /app/static/<name> — needed for the PWA
+# manifest and home-screen icons.
+enableStaticServing = true
