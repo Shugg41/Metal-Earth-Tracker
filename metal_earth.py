@@ -762,12 +762,12 @@ def make_build_card(name, model_id, secs, n_sessions, n_photos, started, finishe
         except Exception:
             photo = None
     if photo is not None:
-        ph = ImageOps.fit(photo, (W - 120, 560), Image.LANCZOS)
+        ph = ImageOps.fit(photo, (W - 120, 440), Image.LANCZOS)
         mask = Image.new("L", ph.size, 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, ph.size[0], ph.size[1]], 28, fill=255)
         img.paste(ph, (60, y), mask)
-        d.rounded_rectangle([60, y, W - 60, y + 560], 28, outline=ACC, width=4)
-        y += 560 + 50
+        d.rounded_rectangle([60, y, W - 60, y + 440], 28, outline=ACC, width=4)
+        y += 440 + 50
 
     d.text((60, y), "BUILD COMPLETE", font=font(34), fill=ACC)
     y += 56
@@ -786,14 +786,15 @@ def make_build_card(name, model_id, secs, n_sessions, n_photos, started, finishe
     if started:    rows.append(("Started", started))
     if finished:   rows.append(("Finished", finished))
     if photo is None: rows.append(("Progress photos", str(n_photos)))
-    row_h = min(92, max(64, (H - 110 - y) // max(1, len(rows))))
+    row_h = min(96, max(70, (H - 100 - y) // max(1, len(rows))))
     for label, value in rows:
         d.line([(60, y), (W - 60, y)], fill=LINE, width=2)
-        d.text((60, y + 22), label, font=font(36), fill=MUTED)
+        d.text((60, y + (row_h - 40) // 2), label, font=font(36), fill=MUTED)
         vw = d.textlength(value, font=font(44))
-        d.text((W - 60 - vw, y + 16), value, font=font(44), fill=ACC)
+        d.text((W - 60 - vw, y + (row_h - 50) // 2), value, font=font(44), fill=ACC)
         y += row_h
-    d.text((60, H - 70), "Metal Earth Workbench", font=font(28), fill=KHAKI)
+    d.line([(60, y), (W - 60, y)], fill=LINE, width=2)
+    d.text((60, H - 64), "Metal Earth Workbench", font=font(28), fill=KHAKI)
     out = io.BytesIO()
     img.save(out, format="PNG")
     return out.getvalue()
