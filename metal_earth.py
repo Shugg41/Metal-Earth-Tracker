@@ -242,6 +242,20 @@ input, textarea, [data-baseweb="select"] {
     border-radius: 8px; border: 1px solid var(--border);
 }
 
+/* ── Year wrap-up ── */
+.wrap-hero {
+    background: linear-gradient(135deg, #101810, #1c2c1c);
+    border: 2px solid var(--accent); border-radius: 14px;
+    padding: 20px; margin: 8px 0 12px; text-align: center;
+}
+.wrap-year  { color: var(--khaki); font-size: 0.75rem; letter-spacing: 3px; text-transform: uppercase; }
+.wrap-big   { color: var(--accent); font-size: 3rem; font-weight: 700; line-height: 1.1;
+              font-family: 'Courier New', monospace; }
+.wrap-sub   { color: var(--muted); font-size: 0.85rem; }
+.photo-wall { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 6px; }
+.photo-wall img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px;
+                  border: 1px solid var(--border); }
+
 /* ── Journal timeline ── */
 .journal-entry {
     background: var(--surface);
@@ -724,6 +738,94 @@ def difficulty_input(current=None, key=""):
         key=f"diff_{key}",
         help="Count the tabs on the speedometer on the back of the box")
 
+NOTE_CHIPS = ["Cutting", "Bending", "Assembly", "Detail work", "Fixing a mistake"]
+
+def make_build_card(name, model_id, secs, n_sessions, n_photos, started, finished,
+                    rating, difficulty, photo_url=None):
+    """Render a shareable 1080x1350 PNG for a finished kit. Text-only glyphs:
+    the bundled font has no emoji, so nothing here relies on them."""
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
+    W, H = 1080, 1350
+    BG, SURF, LINE = (12, 14, 12), (21, 26, 21), (38, 50, 38)
+    ACC, KHAKI, TEXT, MUTED = (127, 174, 122), (179, 168, 120), (232, 232, 232), (136, 136, 136)
+    font = lambda size: ImageFont.load_default(size=size)
+    img = Image.new("RGB", (W, H), BG)
+    d = ImageDraw.Draw(img)
+
+    y = 60
+    photo = None
+    if photo_url:
+        try:
+            r = requests.get(photo_url, timeout=10)
+            if r.status_code == 200:
+                photo = ImageOps.exif_transpose(Image.open(io.BytesIO(r.content))).convert("RGB")
+        except Exception:
+            photo = None
+    if photo is not None:
+        ph = ImageOps.fit(photo, (W - 120, 440), Image.LANCZOS)
+        mask = Image.new("L", ph.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, ph.size[0], ph.size[1]], 28, fill=255)
+        img.paste(ph, (60, y), mask)
+        d.rounded_rectangle([60, y, W - 60, y + 440], 28, outline=ACC, width=4)
+        y += 440 + 50
+
+    d.text((60, y), "BUILD COMPLETE", font=font(34), fill=ACC)
+    y += 56
+    # Shrink the title until it fits on one line
+    size = 84
+    while size > 40 and d.textlength(str(name).strip(), font=font(size)) > W - 120:
+        size -= 4
+    d.text((60, y), str(name).strip(), font=font(size), fill=TEXT)
+    y += size + 26
+    d.text((60, y), str(model_id), font=font(32), fill=MUTED)
+    y += 70
+
+    rows = [("Build time", fmt_seconds(secs)), ("Sessions", str(n_sessions))]
+    if difficulty: rows.append(("Difficulty", f"{difficulty}/10"))
+    if rating:     rows.append(("My rating", f"{rating}/10"))
+    if started:    rows.append(("Started", started))
+    if finished:   rows.append(("Finished", finished))
+    if photo is None: rows.append(("Progress photos", str(n_photos)))
+    row_h = min(96, max(70, (H - 100 - y) // max(1, len(rows))))
+    for label, value in rows:
+        d.line([(60, y), (W - 60, y)], fill=LINE, width=2)
+        d.text((60, y + (row_h - 40) // 2), label, font=font(36), fill=MUTED)
+        vw = d.textlength(value, font=font(44))
+        d.text((W - 60 - vw, y + (row_h - 50) // 2), value, font=font(44), fill=ACC)
+        y += row_h
+    d.line([(60, y), (W - 60, y)], fill=LINE, width=2)
+    d.text((60, H - 64), "Metal Earth Workbench", font=font(28), fill=KHAKI)
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+def build_card_ui(model, key):
+    """Button -> generated image -> save. Generated on demand because it
+    fetches the newest photo from GitHub."""
+    mid = model['model_id']
+    state_key = f"buildcard_{mid}"
+    if st.button("🖼️ Create shareable build card", key=f"mkcard_{key}", use_container_width=True):
+        logs   = get_logs(mid)
+        photos = get_photos(mid)
+        real   = logs[logs['is_estimate'].fillna(0) == 0] if not logs.empty else logs
+        first  = pd.to_datetime(logs['start_time'], format='mixed', errors='coerce').min() \
+                 if not logs.empty else pd.NaT
+        done   = pd.to_datetime(model['last_worked'], errors='coerce')
+        with st.spinner("Drawing your build card..."):
+            st.session_state[state_key] = make_build_card(
+                model['name'], mid, total_time_seconds(mid), len(real), len(photos),
+                None if pd.isna(first) else first.strftime('%b %d, %Y'),
+                None if pd.isna(done) else done.strftime('%b %d, %Y'),
+                safe_int(model['rating']), safe_int(model.get('difficulty_num')),
+                photos.iloc[0]['url'] if not photos.empty else None)
+    if st.session_state.get(state_key):
+        st.image(st.session_state[state_key], use_container_width=True)
+        st.download_button(
+            "⬇️ Save image", data=st.session_state[state_key],
+            file_name=f"{str(model['name']).strip().replace(' ', '_')}_build_card.png",
+            mime="image/png", key=f"dlcard_{key}", use_container_width=True)
+        st.caption("Or press and hold the picture to save or share it.")
+
 def rating_display(rating, prefix=" &nbsp;·&nbsp; "):
     """Your 1-10 score for a finished kit. 0/None means unrated — show nothing
     rather than implying a bad score."""
@@ -1028,6 +1130,10 @@ if st.session_state.page == 'inventory':
 elif st.session_state.page == 'stats':
     st.markdown("<h2>📊 Workshop Stats</h2>", unsafe_allow_html=True)
 
+    if st.button(f"🎁 {datetime.now().year} Wrap-up", use_container_width=True, type="primary"):
+        st.session_state.page = 'wrapped'
+        st.rerun()
+
     all_models = get_all_models()
     all_logs   = pd.read_sql_query("SELECT * FROM Build_Logs", conn)
 
@@ -1201,6 +1307,98 @@ elif st.session_state.page == 'stats':
                 </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+# YEAR WRAP-UP PAGE
+# ─────────────────────────────────────────────
+elif st.session_state.page == 'wrapped':
+    w_models = get_all_models()
+    w_logs   = pd.read_sql_query("SELECT * FROM Build_Logs", conn)
+    w_photos = pd.read_sql_query("SELECT * FROM Photos", conn)
+    w_logs['ts']   = pd.to_datetime(w_logs['start_time'], format='mixed', errors='coerce')
+    w_photos['ts'] = pd.to_datetime(w_photos['uploaded_at'], format='mixed', errors='coerce')
+    w_models['done_ts'] = pd.to_datetime(w_models['last_worked'], errors='coerce')
+
+    years = sorted({int(y) for y in w_logs['ts'].dt.year.dropna().unique()} |
+                   {datetime.now().year}, reverse=True)
+    year = years[0] if len(years) == 1 else st.selectbox("Year", years)
+
+    ylogs   = w_logs[w_logs['ts'].dt.year == year]
+    yreal   = ylogs[ylogs['is_estimate'].fillna(0) == 0]
+    yphotos = w_photos[w_photos['ts'].dt.year == year].sort_values('ts')
+    ydone   = w_models[(w_models['status'] == 'Completed') & (w_models['done_ts'].dt.year == year)]
+    hours   = ylogs['duration'].sum() / 3600 if not ylogs.empty else 0
+
+    st.markdown(f"""
+    <div class='wrap-hero'>
+        <div class='wrap-year'>Your {year} at the workbench</div>
+        <div class='wrap-big'>{hours:.1f}h</div>
+        <div class='wrap-sub'>of build time</div>
+    </div>""", unsafe_allow_html=True)
+
+    if ylogs.empty and ydone.empty:
+        st.info(f"Nothing logged in {year} yet.")
+    else:
+        chips = [(len(ydone), "Kits Finished"), (len(yreal), "Sessions"), (len(yphotos), "Photos")]
+        if not yreal.empty:
+            chips.append((f"{yreal['duration'].mean() / 60:.0f}m", "Avg Session"))
+            chips.append((ylogs['ts'].dt.date.nunique(), "Build Days"))
+        st.markdown("<div class='stat-chips'>" + "".join(
+            f"<div class='stat-chip'><div class='stat-chip-value'>{v}</div>"
+            f"<div class='stat-chip-label'>{l}</div></div>" for v, l in chips) + "</div>",
+            unsafe_allow_html=True)
+
+        # Highlights — each row only appears when the data for it exists
+        rows = []
+        if not ydone.empty:
+            totals = w_logs.groupby('model_id')['duration'].sum()
+            d2 = ydone.assign(total=ydone['model_id'].map(totals).fillna(0))
+            longest = d2.sort_values('total', ascending=False).iloc[0]
+            if longest['total'] > 0:
+                rows.append(("Longest build", f"{str(longest['name']).strip()} · {fmt_seconds(longest['total'])}"))
+            rated = d2[d2['rating'].fillna(0) > 0]
+            if not rated.empty:
+                top = rated.sort_values('rating', ascending=False).iloc[0]
+                rows.append(("Top rated", f"{str(top['name']).strip()} · ★ {safe_int(top['rating'])}/10"))
+            hard = d2[d2['difficulty_num'].fillna(0) > 0]
+            if not hard.empty:
+                h = hard.sort_values('difficulty_num', ascending=False).iloc[0]
+                rows.append(("Hardest kit", f"{str(h['name']).strip()} · {safe_int(h['difficulty_num'])}/10"))
+        if not ylogs.empty:
+            by_month = ylogs.groupby(ylogs['ts'].dt.month)['duration'].sum()
+            m = int(by_month.idxmax())
+            rows.append(("Busiest month",
+                         f"{datetime(year, m, 1).strftime('%B')} · {by_month.max() / 3600:.1f}h"))
+        if not yreal.empty:
+            ls = yreal.sort_values('duration', ascending=False).iloc[0]
+            names = dict(zip(w_models['model_id'], w_models['name']))
+            rows.append(("Longest session",
+                         f"{fmt_seconds(ls['duration'])} · {str(names.get(ls['model_id'], ls['model_id'])).strip()}"))
+        if rows:
+            st.markdown("<div class='finish-card'><div class='finish-title'>Highlights</div>" + "".join(
+                f"<div class='finish-row'><span>{l}</span><b>{v}</b></div>" for l, v in rows) + "</div>",
+                unsafe_allow_html=True)
+
+        if not ydone.empty:
+            st.markdown("#### ✅ Finished this year")
+            for _, r in ydone.sort_values('done_ts').iterrows():
+                st.markdown(f"""
+                <div style='display:flex;justify-content:space-between;padding:8px 12px;
+                            background:var(--surface);border-radius:6px;margin-bottom:6px;
+                            border:1px solid var(--border)'>
+                    <span style='color:#e0e0e0'>{str(r['name']).strip()}</span>
+                    <span style='color:var(--muted)'>{r['done_ts'].strftime('%b %d')}{rating_display(r['rating'])}</span>
+                </div>""", unsafe_allow_html=True)
+
+        if not yphotos.empty:
+            st.markdown("#### 📸 Photo wall")
+            st.markdown("<div class='photo-wall'>" + "".join(
+                f"<img src='{u}' loading='lazy' alt='' onerror='this.remove()'>"
+                for u in yphotos['url'].tail(30)) + "</div>", unsafe_allow_html=True)
+
+    if st.button("⬅️ Back to stats", use_container_width=True):
+        st.session_state.page = 'stats'
+        st.rerun()
+
+# ─────────────────────────────────────────────
 # EXPORT PAGE — get a copy of your data that's yours
 # ─────────────────────────────────────────────
 elif st.session_state.page == 'export':
@@ -1338,6 +1536,7 @@ elif st.session_state.page == 'workbench':
                 f"<img src='{_p['url']}' loading='lazy' alt='' onerror='this.remove()'>"
                 for _, _p in _photos.head(3).iterrows())
             st.markdown(f"<div class='finish-strip'>{_strip}</div>", unsafe_allow_html=True)
+        build_card_ui(model, key="celebrate")
         if st.button("Nice — dismiss", type="primary", use_container_width=True):
             del st.session_state['celebrate']
             st.rerun()
@@ -1359,8 +1558,12 @@ elif st.session_state.page == 'workbench':
         recap = st.session_state.get('recap')
         if recap and recap.get('model_id') == model_id and not is_active:
             st.success(f"✅ Logged {fmt_seconds(recap['duration'])} — add a note & photo while it's fresh?")
-            recap_note = st.text_input("What did you work on?", key="recap_note",
+            # One-tap notes: tap what you did; typing is optional extra detail
+            recap_tags = st.pills("What did you work on?", NOTE_CHIPS, selection_mode="multi",
+                                  key="recap_tags") if hasattr(st, "pills") else []
+            recap_text = st.text_input("Add detail (optional)", key="recap_note",
                                        placeholder="e.g. Finished the wings")
+            recap_note = " — ".join(p for p in (", ".join(recap_tags or []), recap_text.strip()) if p)
             recap_cam  = st.camera_input("📷 Snap a progress photo (optional)", key="recap_cam")
             recap_up   = None
             if recap_cam is None:
@@ -1592,6 +1795,9 @@ elif st.session_state.page == 'workbench':
                 'kind': 'done', 'rating': safe_int(model['rating']),
                 'total': total_time_seconds(model_id)})
 
+        if model['status'] == 'Completed' and st.session_state.get('celebrate') != model_id:
+            build_card_ui(model, key="journal")
+
         if not entries:
             st.info("Nothing here yet — log a session or add a photo and the story builds itself.")
         else:
@@ -1703,6 +1909,30 @@ elif st.session_state.page == 'workbench':
         if photos.empty:
             st.info("No photos yet. Document your build progress!")
         else:
+            # Flip-through: step through the build oldest -> newest
+            if len(photos) > 1:
+                flip = photos.iloc[::-1].reset_index(drop=True)   # get_photos is newest-first
+                fkey = f"flip_{model_id}"
+                idx  = min(st.session_state.get(fkey, 0), len(flip) - 1)
+                cur  = flip.iloc[idx]
+                st.image(cur['url'], use_container_width=True)
+                with st.container(key="nowrap_flip"):
+                    f1, f2, f3 = st.columns([1, 2, 1])
+                    if f1.button("◀", key="flip_prev", use_container_width=True, disabled=idx == 0):
+                        st.session_state[fkey] = idx - 1
+                        st.rerun()
+                    f2.markdown(
+                        f"<div style='text-align:center;color:var(--khaki);font-size:0.85rem;padding-top:6px'>"
+                        f"{idx + 1} of {len(flip)} · {str(cur['uploaded_at'])[:10]}</div>",
+                        unsafe_allow_html=True)
+                    if f3.button("▶", key="flip_next", use_container_width=True,
+                                 disabled=idx == len(flip) - 1):
+                        st.session_state[fkey] = idx + 1
+                        st.rerun()
+                if cur['caption']:
+                    st.caption(cur['caption'])
+                st.divider()
+
             st.write(f"**{len(photos)} photo{'s' if len(photos) > 1 else ''}**")
             cols = st.columns(3)
             for i, (_, photo) in enumerate(photos.iterrows()):
