@@ -800,25 +800,57 @@ def make_build_card(name, model_id, secs, n_sessions, n_photos, started, finishe
     return out.getvalue()
 
 def build_card_ui(model, key):
-    """Button -> generated image -> save. Generated on demand because it
-    fetches the newest photo from GitHub."""
+    """Button -> pick a photo -> generated image -> save. Generated on demand
+    because it fetches the chosen photo from GitHub."""
     mid = model['model_id']
-    state_key = f"buildcard_{mid}"
-    if st.button("🖼️ Create shareable build card", key=f"mkcard_{key}", use_container_width=True):
-        logs   = get_logs(mid)
-        photos = get_photos(mid)
-        real   = logs[logs['is_estimate'].fillna(0) == 0] if not logs.empty else logs
-        first  = pd.to_datetime(logs['start_time'], format='mixed', errors='coerce').min() \
-                 if not logs.empty else pd.NaT
-        done   = pd.to_datetime(model['last_worked'], errors='coerce')
+    state_key, pick_key = f"buildcard_{mid}", f"buildcard_pick_{mid}"
+    photos = get_photos(mid)
+
+    def _generate(photo_url):
+        logs  = get_logs(mid)
+        real  = logs[logs['is_estimate'].fillna(0) == 0] if not logs.empty else logs
+        first = pd.to_datetime(logs['start_time'], format='mixed', errors='coerce').min() \
+                if not logs.empty else pd.NaT
+        done  = pd.to_datetime(model['last_worked'], errors='coerce')
         with st.spinner("Drawing your build card..."):
             st.session_state[state_key] = make_build_card(
                 model['name'], mid, total_time_seconds(mid), len(real), len(photos),
                 None if pd.isna(first) else first.strftime('%b %d, %Y'),
                 None if pd.isna(done) else done.strftime('%b %d, %Y'),
                 safe_int(model['rating']), safe_int(model.get('difficulty_num')),
-                photos.iloc[0]['url'] if not photos.empty else None)
-    if st.session_state.get(state_key):
+                photo_url)
+        st.session_state[pick_key] = False
+
+    has_card = bool(st.session_state.get(state_key))
+    label = "🔄 Pick a different photo" if has_card and len(photos) > 1 else \
+            "🖼️ Create shareable build card"
+    if (not has_card or len(photos) > 1) and \
+            st.button(label, key=f"mkcard_{key}", use_container_width=True):
+        if len(photos) > 1:
+            st.session_state[pick_key] = True      # choose which photo goes on the card
+        else:
+            _generate(photos.iloc[0]['url'] if not photos.empty else None)
+
+    if st.session_state.get(pick_key):
+        st.caption("Tap the photo you want on the card.")
+        per_row = 3
+        for start in range(0, len(photos), per_row):
+            chunk = photos.iloc[start:start + per_row]
+            with st.container(key=f"nowrap_pick_{key}_{start}"):
+                cols = st.columns(per_row)
+                for col, (_, p) in zip(cols, chunk.iterrows()):
+                    with col:
+                        st.markdown(
+                            f"<img src='{p['url']}' loading='lazy' alt='' "
+                            f"style='width:100%;aspect-ratio:1;object-fit:cover;"
+                            f"border-radius:8px;border:1px solid var(--border)'>",
+                            unsafe_allow_html=True)
+                        if st.button("Use", key=f"pick_{key}_{p['photo_id']}",
+                                     use_container_width=True):
+                            _generate(p['url'])
+                            st.rerun()
+
+    elif st.session_state.get(state_key):
         st.image(st.session_state[state_key], use_container_width=True)
         st.download_button(
             "⬇️ Save image", data=st.session_state[state_key],
